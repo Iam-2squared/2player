@@ -15,7 +15,10 @@ function unpack(result) {
   if (!result || typeof result !== 'object' || Array.isArray(result) || result.ok !== true) throw unavailable();
   return result;
 }
-async function rpc(action, input = {}, config = getConfig()) {
+async function callRpc(functionName, action, input, config, timeoutMs = 12000) {
+  // The function name is selected only by the two fixed server wrappers below.
+  if (!['two_player_rpc', 'two_player_lobby_rpc'].includes(functionName)) throw unavailable();
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 12000) throw unavailable();
   try {
     if (config.databaseUrl) {
       if (!pool) {
@@ -24,16 +27,20 @@ async function rpc(action, input = {}, config = getConfig()) {
           statement_timeout: 12000, idleTimeoutMillis: 10000, application_name: 'two-player-test'});
         pool.on('error', () => {});
       }
-      const result = await pool.query('SELECT public.two_player_rpc($1,$2,$3::jsonb) AS result', [config.rpcSecret, action, JSON.stringify(input)]);
+      const result = await pool.query('SELECT public.' + functionName + '($1,$2,$3::jsonb) AS result', [config.rpcSecret, action, JSON.stringify(input)]);
       return unpack(result.rows[0]?.result);
     }
     const headers = {'Content-Type': 'application/json', apikey: config.publishableKey};
     if (config.publishableKey.split('.').length === 3) headers.Authorization = 'Bearer ' + config.publishableKey;
-    const response = await fetch(config.supabaseOrigin + '/rest/v1/rpc/two_player_rpc', {method: 'POST', headers,
-      body: JSON.stringify({p_secret: config.rpcSecret, p_action: action, p_input: input}), signal: AbortSignal.timeout(12000), redirect: 'error'});
+    const response = await fetch(config.supabaseOrigin + '/rest/v1/rpc/' + functionName, {method: 'POST', headers,
+      body: JSON.stringify({p_secret: config.rpcSecret, p_action: action, p_input: input}), signal: AbortSignal.timeout(timeoutMs), redirect: 'error'});
     if (!response.ok) { await response.body?.cancel(); throw unavailable(); }
     return unpack(JSON.parse(await boundedText(response, 512 * 1024)));
   } catch (error) { if (error instanceof HttpError) throw error; throw unavailable(); }
 }
+async function rpc(action, input = {}, config = getConfig()) { return callRpc('two_player_rpc', action, input, config); }
+async function lobbyRpc(action, input = {}, config = getConfig(), {timeoutMs = 12000} = {}) {
+  return callRpc('two_player_lobby_rpc', action, input, config, timeoutMs);
+}
 async function closeStore() { const previous = pool; pool = undefined; if (previous) await previous.end(); }
-module.exports = {rpc, unpack, closeStore};
+module.exports = {rpc, lobbyRpc, unpack, closeStore};

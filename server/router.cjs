@@ -25,6 +25,25 @@ function mutationInput(action, body) {
       (!integer(body.round, 1, 40) || body.version !== 2 || !integer(body.piece, 0, 7) || !integer(body.angle, 0, 359) || !integer(body.power, 0, 100)))) throw invalid();
   return body;
 }
+function lobbyInput(action, body, memberId) {
+  const fields = {snapshot: [], heartbeat: [], leave: [], challenge: ['requestId', 'targetId', 'stake', 'formation'],
+    accept: ['requestId', 'invitationId', 'stake', 'formation'], decline: ['requestId', 'invitationId'],
+    invite_cancel: ['requestId', 'invitationId'], queue: ['requestId', 'stake', 'formation'], queue_cancel: ['requestId']}[action];
+  if (!fields) throw invalid();
+  exact(body, fields);
+  if ((fields.includes('requestId') && !uuid(body.requestId)) ||
+      (fields.includes('targetId') && (!uuid(body.targetId) || body.targetId.toLowerCase() === memberId.toLowerCase())) ||
+      (fields.includes('invitationId') && !uuid(body.invitationId)) ||
+      (fields.includes('stake') && !stake(body.stake)) ||
+      (fields.includes('formation') && !integer(body.formation, 0, 2))) throw invalid();
+  return body;
+}
+function lobbyActor(req, member, config, auth = identity) {
+  const token = auth.sessionToken(req, config);
+  if (!identity.TOKEN.test(token || '')) throw new HttpError(401, 'ログインしてください。', 'AUTHENTICATION_REQUIRED');
+  return {memberId: member.id, name: member.name, sessionId: crypto.createHmac('sha256', config.cookieSecret)
+    .update('two-player-lobby-session\0' + token).digest('hex')};
+}
 function select(object, keys) {
   if (!object || typeof object !== 'object' || Array.isArray(object)) return null;
   return Object.fromEntries(keys.filter(key => Object.hasOwn(object, key)).map(key => [key, object[key]]));
@@ -61,6 +80,40 @@ function publicDTO(result) {
   if (Array.isArray(result.rooms)) output.rooms = result.rooms.slice(0, 20).map(room => matchDTO(room, true));
   return output;
 }
+function lobbyDTO(result, memberId) {
+  const failed = () => new HttpError(503, '対戦相手を確認できませんでした。', 'INVALID_LOBBY_STATE');
+  const value = result?.lobby;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !Array.isArray(value.online) || value.online.length > 100 ||
+      !Array.isArray(value.incoming) || value.incoming.length > 50 || !Array.isArray(value.outgoing) || value.outgoing.length > 50) throw failed();
+  const person = raw => {
+    if (!raw || !uuid(raw.memberId) || typeof raw.name !== 'string' || !raw.name.trim() || raw.name.length > 20) throw failed();
+    return {memberId: raw.memberId, name: raw.name};
+  };
+  const timestamp = raw => { if (typeof raw !== 'string' || !Number.isFinite(Date.parse(raw))) throw failed(); return raw; };
+  const invitation = (raw, direction) => {
+    if (!raw || !uuid(raw.id) || !stake(raw.stake) || !integer(raw.formation, 0, 2)) throw failed();
+    return {id: raw.id, [direction]: person(raw[direction]), stake: raw.stake, formation: raw.formation,
+      createdAt: timestamp(raw.createdAt), expiresAt: timestamp(raw.expiresAt)};
+  };
+  const online = value.online.map(raw => {
+    if (typeof raw?.busy !== 'boolean') throw failed();
+    return {...person(raw), busy: raw.busy};
+  }).filter(raw => raw.memberId.toLowerCase() !== memberId.toLowerCase());
+  if (new Set(online.map(raw => raw.memberId.toLowerCase())).size !== online.length) throw failed();
+  let queue = null;
+  if (value.queue !== null) {
+    if (!value.queue || !integer(value.queue.position, 1, 500) || !stake(value.queue.stake) ||
+        !integer(value.queue.formation, 0, 2)) throw failed();
+    queue = {joinedAt: timestamp(value.queue.joinedAt), position: value.queue.position,
+      stake: value.queue.stake, formation: value.queue.formation};
+  }
+  const output = publicDTO({...(Object.hasOwn(result, 'wallet') ? {wallet: result.wallet} : {}),
+    ...(Object.hasOwn(result, 'match') ? {match: result.match} : {})});
+  if (output.match) delete output.match.code;
+  output.lobby = {online, queue, incoming: value.incoming.map(raw => invitation(raw, 'from')),
+    outgoing: value.outgoing.map(raw => invitation(raw, 'to'))};
+  return output;
+}
 function resolutionId(claim) {
   const hex = crypto.createHash('sha256').update('two-player-resolution\0' + claim.claimToken).digest('hex');
   return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-4' + hex.slice(13, 16) + '-8' + hex.slice(17, 20) + '-' + hex.slice(20, 32);
@@ -74,7 +127,7 @@ function requestUrl(req) {
   if (routes.length && metadata !== undefined && routes[0] !== metadata) throw invalid();
   const route = routes[0] ?? metadata;
   if (route !== undefined) {
-    if (!/^(?:session|login|logout|rooms|rooms\/join|match|offer|ready|formation|input|cancel)$/.test(route)) throw invalid();
+    if (!/^(?:session|login|logout|rooms|rooms\/join|match|offer|ready|formation|input|cancel|lobby(?:\/(?:heartbeat|leave))?|challenge(?:\/(?:accept|decline|cancel))?|queue(?:\/cancel)?)$/.test(route)) throw invalid();
     const pathname = '/api/' + route;
     if (!['/api/index', '/api/index.js', pathname].includes(url.pathname)) throw invalid();
     url.pathname = pathname;
@@ -86,6 +139,7 @@ function createHandler(overrides = {}) {
   const configFor = overrides.getConfig || getConfig;
   const auth = {...identity, ...overrides.identity};
   const rpc = overrides.rpc || store.rpc;
+  const lobbyRpc = overrides.lobbyRpc || store.lobbyRpc;
   const simulate = overrides.simulate || ((state, inputs, formations) => require('../public/physics.js').simulate(state, inputs, formations));
   async function processResult(result, member, config) {
     if (!result._processing) return result;
@@ -112,7 +166,9 @@ function createHandler(overrides = {}) {
     try {
       const url = requestUrl(req);
       const routes = {'/api/session': ['GET'], '/api/login': ['POST'], '/api/logout': ['POST'], '/api/rooms': ['GET', 'POST'],
-        '/api/rooms/join': ['POST'], '/api/match': ['GET'], '/api/offer': ['POST'], '/api/ready': ['POST'], '/api/formation': ['POST'], '/api/input': ['POST'], '/api/cancel': ['POST']};
+        '/api/rooms/join': ['POST'], '/api/match': ['GET'], '/api/offer': ['POST'], '/api/ready': ['POST'], '/api/formation': ['POST'], '/api/input': ['POST'], '/api/cancel': ['POST'],
+        '/api/lobby': ['GET'], '/api/lobby/heartbeat': ['POST'], '/api/lobby/leave': ['POST'], '/api/challenge': ['POST'],
+        '/api/challenge/accept': ['POST'], '/api/challenge/decline': ['POST'], '/api/challenge/cancel': ['POST'], '/api/queue': ['POST'], '/api/queue/cancel': ['POST']};
       const allowed = routes[url.pathname];
       if (!allowed) throw new HttpError(404, '見つかりません。', 'NOT_FOUND');
       if (!allowed.includes(req.method)) { res.setHeader('Allow', allowed.join(', ')); throw new HttpError(405, 'この操作には対応していません。', 'METHOD_NOT_ALLOWED'); }
@@ -132,18 +188,42 @@ function createHandler(overrides = {}) {
       if (url.pathname === '/api/logout') {
         const body = await readJson(req); exact(body, []);
         const token = auth.sessionToken(req, config);
-        try { if (token) await auth.callIdentity('logout', {token}, config); }
+        try {
+          if (token) {
+            // Verify the actor before touching presence. A per-session tombstone
+            // prevents a heartbeat already waiting on the database from reviving
+            // this session after logout. Cleanup failure never traps the cookie.
+            try {
+              const member = await auth.requireMember(req, res, config);
+              await lobbyRpc('logout', lobbyActor(req, member, config, auth), config, {timeoutMs: 2000});
+            } catch { /* Presence also expires without heartbeats. */ }
+            await auth.callIdentity('logout', {token}, config);
+          }
+        }
         finally { auth.clearSession(res, config); }
         return sendJson(res, 200, {ok: true});
       }
       const member = await auth.requireMember(req, res, config);
       const actor = {memberId: member.id, name: member.name};
+      const lobbyAction = {'/api/lobby': 'snapshot', '/api/lobby/heartbeat': 'heartbeat', '/api/lobby/leave': 'leave',
+        '/api/challenge': 'challenge', '/api/challenge/accept': 'accept', '/api/challenge/decline': 'decline',
+        '/api/challenge/cancel': 'invite_cancel', '/api/queue': 'queue', '/api/queue/cancel': 'queue_cancel'}[url.pathname];
+      if (lobbyAction) {
+        if (url.search) throw invalid();
+        const input = lobbyInput(lobbyAction, req.method === 'GET' ? {} : await readJson(req), member.id);
+        const result = await lobbyRpc(lobbyAction, {...input, ...lobbyActor(req, member, config, auth)}, config);
+        // Resolving an abandoned shot returns game fields only. Keep the
+        // already bounded lobby snapshot while the allowlist removes claims.
+        const processed = await processResult(result, member, config);
+        return sendJson(res, 200, lobbyDTO({...result, ...processed}, member.id));
+      }
       if (url.pathname === '/api/session') return sendJson(res, 200, {...publicDTO(await rpc('wallet', actor, config)), user: member});
       if (url.pathname === '/api/rooms' && req.method === 'GET') return sendJson(res, 200, publicDTO(await rpc('list', actor, config)));
       if (url.pathname === '/api/match') {
-        const roomCode = url.searchParams.get('code');
-        if (!code(roomCode) || [...url.searchParams.keys()].some(key => key !== 'code') || url.searchParams.getAll('code').length !== 1) throw invalid();
-        const result = await rpc('state', {...actor, code: roomCode}, config);
+        const parameters = [...url.searchParams];
+        if (parameters.length !== 1 || !['code', 'matchId'].includes(parameters[0][0]) ||
+            (parameters[0][0] === 'code' ? !code(parameters[0][1]) : !uuid(parameters[0][1]))) throw invalid();
+        const result = await rpc('state', {...actor, [parameters[0][0]]: parameters[0][1]}, config);
         return sendJson(res, 200, publicDTO(await processResult(result, member, config)));
       }
       const action = {'/api/rooms': 'create', '/api/rooms/join': 'join', '/api/offer': 'offer', '/api/ready': 'ready', '/api/formation': 'formation', '/api/input': 'input', '/api/cancel': 'cancel'}[url.pathname];
@@ -158,4 +238,4 @@ function createHandler(overrides = {}) {
     }
   };
 }
-module.exports = {createHandler, mutationInput, publicDTO, stateDTO, requestUrl};
+module.exports = {createHandler, mutationInput, lobbyInput, lobbyActor, publicDTO, lobbyDTO, stateDTO, requestUrl};

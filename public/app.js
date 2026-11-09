@@ -13,7 +13,9 @@
   const VIEWS = ['boot', 'login', 'lobby', 'room', 'game'];
   const fmt = value => new Intl.NumberFormat('ja-JP').format(Number(value) || 0);
   const S = {
-    user: null, wallet: null, match: null, rooms: [], booting: true,
+    user: null, wallet: null, match: null, booting: true,
+    lobby: { online: [], queue: null, incoming: [], outgoing: [] }, preferences: { stake: 100, formation: 0 },
+    lobbyGeneration: 0, lobbyRequest: 0, lobbyApplied: 0, heartbeat: null, heartbeatTask: null,
     busy: '', epoch: 0, abort: new AbortController(), poll: null,
     pending: null, angle: 270, power: 65, piece: 0, animation: null, animationQueue: [], raf: 0,
     cancelOpen: false, offerVersion: '', noticeTimer: null,
@@ -89,11 +91,16 @@
     S.abort.abort();
     S.abort = new AbortController();
     clearTimeout(S.poll);
+    clearTimeout(S.heartbeat);
     stopAnimation();
     S.user = user;
     S.wallet = wallet;
     S.match = null;
-    S.rooms = [];
+    S.lobby = { online: [], queue: null, incoming: [], outgoing: [] };
+    S.lobbyGeneration += 1;
+    S.lobbyRequest = 0;
+    S.lobbyApplied = 0;
+    S.heartbeatTask = null;
     S.busy = '';
     S.cancelOpen = false;
     S.dragging = null;
@@ -101,13 +108,19 @@
     S.displayedRound = null;
     const saved = user ? readStorage(accountKey('pending')) : null;
     S.pending = saved && typeof saved.path === 'string' && saved.body?.requestId ? saved : null;
+    const preferences = user ? readStorage(accountKey('preferences')) : null;
+    S.preferences = {
+      stake: Number.isInteger(preferences?.stake) && preferences.stake >= 100 && preferences.stake <= 100000 && preferences.stake % 100 === 0 ? preferences.stake : 100,
+      formation: Number.isInteger(preferences?.formation) && preferences.formation >= 0 && preferences.formation <= 2 ? preferences.formation : 0,
+    };
+    $('lobby-stake').value = S.preferences.stake;
     $('pin').value = '';
     $('login-error').hidden = true;
     S.connectionLost = false;
   }
 
-  function saveActive(code) {
-    if (S.user) writeStorage(accountKey('active'), code || null);
+  function saveActive(matchId) {
+    if (S.user) writeStorage(accountKey('active'), matchId || null);
   }
 
   function scoreOf(role, m = S.match) {
@@ -122,7 +135,14 @@
       catch { /* Revisions from older sessions can be absent. */ }
       if (!current) S.wallet = data.wallet;
     }
-    if (Array.isArray(data.rooms)) S.rooms = data.rooms;
+    if (data.lobby && typeof data.lobby === 'object') {
+      S.lobby = {
+        online: Array.isArray(data.lobby.online) ? data.lobby.online : [],
+        queue: data.lobby.queue || null,
+        incoming: Array.isArray(data.lobby.incoming) ? data.lobby.incoming : [],
+        outgoing: Array.isArray(data.lobby.outgoing) ? data.lobby.outgoing : [],
+      };
+    }
     if (data.match) applyMatch(data.match, initial);
     render();
   }
@@ -143,8 +163,9 @@
           Number(match.round) < Number(previous.round) || (isEnded(previous) && !isEnded(match))) return;
     }
     S.match = match;
-    saveActive(match.code);
+    saveActive(match.id);
     if (changed) {
+      S.lobbyGeneration += 1;
       stopAnimation();
       S.dragging = null;
       S.cancelOpen = false;
@@ -178,10 +199,11 @@
   async function mutate(path, body, { label = path, retry = false } = {}) {
     if (!S.user || S.busy || (S.pending && !retry)) return;
     const epoch = S.epoch;
-    const operation = retry ? S.pending : { path, body: { ...body, requestId: newId() }, code: S.match?.code || '', createdAt: Date.now() };
+    const operation = retry ? S.pending : { path, body: { ...body, requestId: newId() }, matchId: S.match?.id || '', createdAt: Date.now() };
     if (!operation) return;
     S.pending = operation;
     writeStorage(accountKey('pending'), operation);
+    const generation = ++S.lobbyGeneration;
     S.busy = label;
     render();
     try {
@@ -189,23 +211,34 @@
       if (epoch !== S.epoch) return;
       clearPending();
       S.busy = '';
+      if (generation !== S.lobbyGeneration ||
+          (S.match && !isEnded(S.match) && data.match && S.match.id !== data.match.id)) {
+        if ('wallet' in data) applyData({ wallet: data.wallet });
+        schedulePoll(50);
+        return;
+      }
       applyData(data);
-      if (operation.path === 'rooms' || operation.path === 'rooms/join') {
-        const url = new URL(location.href);
-        url.searchParams.delete('room');
-        history.replaceState(null, '', url.pathname + url.search + url.hash);
+      if (operation.path === 'cancel' && data.match?.status === 'cancelled' && data.match.stake == null) {
+        S.match = null;
+        saveActive(null);
+        render();
       }
       schedulePoll(400);
     } catch (error) {
       if (epoch !== S.epoch || error.name === 'AbortError') return;
       S.busy = '';
+      if (generation !== S.lobbyGeneration) {
+        if (error.status >= 400 && error.status < 500) clearPending();
+        schedulePoll(50);
+        return;
+      }
       if (error.status === 401) {
         setSession(null, null);
         notify('もう一度ログインしてください。', true, true);
       } else if (error.status >= 400 && error.status < 500) {
         clearPending();
         notify(error.message, true, true);
-        if (S.match) void refreshMatch();
+        if (S.match) void refreshMatch(); else void refreshLobby();
       } else {
         notify('接続を確認してください。', true, true);
       }
@@ -215,29 +248,33 @@
     }
   }
 
-  async function refreshRooms() {
+  async function refreshLobby({ heartbeat = false } = {}) {
     const epoch = S.epoch;
-    if (!S.user) return;
+    const generation = S.lobbyGeneration;
+    const sequence = ++S.lobbyRequest;
+    if (!S.user || document.hidden) return;
     try {
-      const data = await request('rooms', { epoch });
-      if (epoch !== S.epoch) return;
+      const data = await request(heartbeat ? 'lobby/heartbeat' : 'lobby', { epoch, ...(heartbeat ? { method: 'POST', body: {} } : {}) });
+      if (epoch !== S.epoch || generation !== S.lobbyGeneration || sequence < S.lobbyApplied) return;
+      S.lobbyApplied = sequence;
       applyData(data);
       S.connectionLost = false;
     } catch (error) { handlePollError(error, epoch); }
   }
 
-  async function refreshMatch({ initial = false, code = S.match?.code } = {}) {
+  async function refreshMatch({ initial = false, matchId = S.match?.id } = {}) {
     const epoch = S.epoch;
-    if (!S.user || !code) return;
+    const generation = S.lobbyGeneration;
+    if (!S.user || !matchId) return;
     try {
-      const data = await request(`match?code=${encodeURIComponent(code)}`, { epoch });
-      if (epoch !== S.epoch) return;
+      const data = await request(`match?matchId=${encodeURIComponent(matchId)}`, { epoch });
+      if (epoch !== S.epoch || generation !== S.lobbyGeneration || (S.match && S.match.id !== matchId)) return;
       const reconnected = S.connectionLost;
       S.connectionLost = false;
       applyData(data, { initial });
       if (reconnected) notify('再接続しました。');
     } catch (error) {
-      if (epoch !== S.epoch) return;
+      if (epoch !== S.epoch || generation !== S.lobbyGeneration) return;
       if (error.status === 404 || error.status === 403) {
         S.match = null;
         saveActive(null);
@@ -261,11 +298,30 @@
 
   function schedulePoll(delay = 1800) {
     clearTimeout(S.poll);
-    if (!S.user) return;
+    if (!S.user || document.hidden) return;
     S.poll = setTimeout(async () => {
-      if (S.match && !isEnded(S.match)) await refreshMatch();
-      else if (!S.match) await refreshRooms();
-      schedulePoll(document.hidden ? 6000 : 1800);
+      const epoch = S.epoch;
+      if (!S.busy) {
+        if (S.match && !isEnded(S.match)) await refreshMatch();
+        else if (!S.match) await refreshLobby();
+      }
+      if (epoch === S.epoch) schedulePoll(S.match ? 1800 : 2500);
+    }, delay);
+  }
+
+  function scheduleHeartbeat(delay = 20000) {
+    clearTimeout(S.heartbeat);
+    if (!S.user || document.hidden) return;
+    const epoch = S.epoch;
+    S.heartbeat = setTimeout(async () => {
+      if (!S.heartbeatTask) {
+        const task = refreshLobby({ heartbeat: true });
+        S.heartbeatTask = task;
+        await task;
+        if (epoch !== S.epoch) return;
+        if (S.heartbeatTask === task) S.heartbeatTask = null;
+      }
+      if (epoch === S.epoch) scheduleHeartbeat();
     }, delay);
   }
 
@@ -289,49 +345,114 @@
     show('retry-notice', !!S.pending && !S.busy);
     $('retry-action').disabled = !!S.busy;
     const blocked = !!S.busy || !!S.pending;
-    $('create-room').disabled = blocked;
-    $('join-room').disabled = blocked;
-    text('create-room', S.busy === 'rooms' ? '部屋をつくっています…' : '部屋をつくる');
-    text('join-room', S.busy === 'rooms/join' ? '部屋を確認しています…' : '参加する');
-    if (active === 'lobby') renderRooms();
+    if (active === 'lobby') renderLobby(blocked);
     if (active === 'room') renderRoom(blocked);
     if (active === 'game') renderGame(blocked);
     drawCurrent();
   }
 
-  function renderRooms() {
-    const list = $('rooms-list');
-    list.replaceChildren();
-    const rooms = S.rooms.filter(m => m && m.code && !isEnded(m));
-    show('active-rooms', rooms.length > 0);
-    for (const room of rooms) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'room-item';
-      button.disabled = !!S.busy;
-      const code = document.createElement('strong'); code.textContent = room.code;
-      const names = document.createElement('span'); names.textContent = [room.host?.name, room.guest?.name || '相手を待っています'].filter(Boolean).join(' / ');
-      const status = document.createElement('span'); status.className = 'room-item-state'; status.textContent = room.status === 'waiting' ? '待機中 →' : '対戦に戻る →';
-      button.append(code, names, status);
-      button.addEventListener('click', () => { void refreshMatch({ code: room.code, initial: true }); });
+  function preferences() {
+    if (!$('lobby-stake').reportValidity()) return null;
+    const stake = Number($('lobby-stake').value);
+    if (!Number.isInteger(stake) || stake < 100 || stake > 100000 || stake % 100 !== 0) return null;
+    S.preferences.stake = stake;
+    writeStorage(accountKey('preferences'), S.preferences);
+    return { stake, formation: S.preferences.formation };
+  }
+
+  function invitationButton(label, attribute, invitationId, path, body, disabled) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'button small secondary';
+    button.textContent = label; button.setAttribute(attribute, invitationId); button.disabled = disabled;
+    button.addEventListener('click', () => {
+      const selected = path === 'challenge/accept' ? preferences() : {};
+      if (!selected) return;
+      void mutate(path, { ...body, ...selected });
+    });
+    return button;
+  }
+
+  function renderLobby(blocked) {
+    const queued = !!S.lobby.queue;
+    const fixedChoice = S.lobby.queue || S.lobby.outgoing[0];
+    if (fixedChoice && Number.isInteger(fixedChoice.stake) && fixedChoice.stake >= 100 && fixedChoice.stake <= 100000 &&
+        fixedChoice.stake % 100 === 0 && Number.isInteger(fixedChoice.formation) && fixedChoice.formation >= 0 && fixedChoice.formation <= 2) {
+      const changed = S.preferences.stake !== fixedChoice.stake || S.preferences.formation !== fixedChoice.formation;
+      S.preferences = { stake: fixedChoice.stake, formation: fixedChoice.formation };
+      $('lobby-stake').value = fixedChoice.stake;
+      if (changed) writeStorage(accountKey('preferences'), S.preferences);
+    }
+    $('random-button').disabled = blocked || queued || S.lobby.outgoing.length > 0;
+    show('random-button', !queued);
+    show('queue-wait', queued);
+    text('queue-status', Number.isInteger(S.lobby.queue?.position) ? `待機中 · ${S.lobby.queue.position}番目` : '待機中');
+    $('queue-cancel').disabled = blocked;
+    $('lobby-stake').disabled = blocked || queued || S.lobby.outgoing.length > 0;
+    $('refresh-lobby').disabled = blocked;
+    drawFormationChoices(true);
+
+    const incoming = $('incoming-challenges'), outgoing = $('outgoing-challenges');
+    incoming.replaceChildren(); outgoing.replaceChildren();
+    const currentInvites = values => values.filter(value => !value.expiresAt || Date.parse(value.expiresAt) > Date.now());
+    for (const invitation of currentInvites(S.lobby.incoming)) {
+      const card = document.createElement('article'); card.className = 'invitation-card'; card.dataset.invitation = invitation.id;
+      const summary = document.createElement('div'); summary.className = 'invitation-summary';
+      const name = document.createElement('strong'); name.textContent = invitation.from?.name || '';
+      const amount = document.createElement('span'); amount.textContent = `${fmt(invitation.stake)} 轟`;
+      summary.append(name, amount);
+      const actions = document.createElement('div'); actions.className = 'invitation-actions';
+      actions.append(
+        invitationButton('対戦', 'data-accept-invitation', invitation.id, 'challenge/accept', { invitationId: invitation.id }, blocked),
+        invitationButton('辞退', 'data-decline-invitation', invitation.id, 'challenge/decline', { invitationId: invitation.id }, blocked),
+      );
+      card.append(summary, actions); incoming.append(card);
+    }
+    for (const invitation of currentInvites(S.lobby.outgoing)) {
+      const card = document.createElement('article'); card.className = 'invitation-card outgoing';
+      const summary = document.createElement('div'); summary.className = 'invitation-summary';
+      const name = document.createElement('strong'); name.textContent = invitation.to?.name || '';
+      const status = document.createElement('span'); status.textContent = '返事待ち';
+      summary.append(name, status);
+      card.append(summary, invitationButton('取消', 'data-cancel-invitation', invitation.id, 'challenge/cancel', { invitationId: invitation.id }, blocked));
+      outgoing.append(card);
+    }
+    show('challenge-panel', incoming.childElementCount + outgoing.childElementCount > 0);
+
+    const users = S.lobby.online.filter(user => user && !sameId(user.memberId, S.user?.id));
+    text('online-count', users.length);
+    show('online-empty', users.length === 0);
+    const list = $('online-users'); list.replaceChildren();
+    for (const user of users) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'online-user';
+      button.dataset.challengeUser = user.memberId;
+      button.disabled = blocked || !!user.busy || S.lobby.outgoing.length > 0;
+      const indicator = document.createElement('span'); indicator.className = 'online-dot'; indicator.setAttribute('aria-hidden', 'true');
+      const name = document.createElement('strong'); name.textContent = user.name || '';
+      const status = document.createElement('span'); status.className = 'online-status'; status.textContent = user.busy ? '対戦中' : '›';
+      button.append(indicator, name, status);
+      button.addEventListener('click', () => {
+        const selected = preferences();
+        if (selected) void mutate('challenge', { targetId: user.memberId, ...selected });
+      });
       list.append(button);
     }
   }
 
-  function drawFormationChoices() {
+  function drawFormationChoices(lobby = false) {
+    const prefix = lobby ? 'lobby-' : '';
     FORMATIONS.forEach((formation, index) => {
-      const ctx = $('formation-canvas-' + index).getContext('2d');
+      const ctx = $(prefix + 'formation-canvas-' + index).getContext('2d');
       ctx.fillStyle = '#4fa83b'; ctx.fillRect(0,0,160,120);
       ctx.strokeStyle = '#ffffffa8'; ctx.lineWidth = 1.5;
       ctx.strokeRect(5,5,150,110); ctx.strokeRect(48,80,64,35);
       ctx.beginPath(); ctx.arc(80,5,22,0,Math.PI); ctx.stroke();
       formation.forEach(([x,y]) => {
         ctx.beginPath(); ctx.arc(x/4,(y-480)/4,5,0,Math.PI*2);
-        ctx.fillStyle = COLORS[seat()]; ctx.fill(); ctx.strokeStyle = '#172a2d'; ctx.lineWidth=1.7; ctx.stroke();
+        ctx.fillStyle = COLORS[lobby ? 0 : seat()]; ctx.fill(); ctx.strokeStyle = '#172a2d'; ctx.lineWidth=1.7; ctx.stroke();
       });
-      const button = $('formation-' + index);
-      button.setAttribute('aria-pressed', String(Number(ownPlayer()?.formation || 0) === index));
-      button.disabled = !!S.busy || !!S.pending;
+      const button = $(prefix + 'formation-' + index);
+      button.setAttribute('aria-pressed', String(Number(lobby ? S.preferences.formation : ownPlayer()?.formation || 0) === index));
+      button.disabled = !!S.busy || !!S.pending || (lobby && (!!S.lobby.queue || S.lobby.outgoing.length > 0));
     });
   }
 
@@ -339,7 +460,6 @@
     const match = S.match;
     const role = myRole();
     const own = match[role];
-    text('room-code', match.code);
     for (const playerRole of ['host', 'guest']) {
       const player = match[playerRole];
       text(`${playerRole}-name`, player ? `${player.name}${playerRole === role ? ' · 自分' : ''}` : '参加待ち');
@@ -597,12 +717,13 @@
   }
 
   async function enterLobby() {
+    S.lobbyGeneration += 1;
     stopAnimation();
     S.match = null;
     S.cancelOpen = false;
     saveActive(null);
     render();
-    await refreshRooms();
+    await refreshLobby();
     schedulePoll();
   }
 
@@ -642,19 +763,18 @@
   async function restoreRoom() {
     const epoch = S.epoch;
     const active = readStorage(accountKey('active'));
-    if (typeof active === 'string' && active.length <= 16) await refreshMatch({ code: active, initial: true });
+    // Old create/join operations never held funds. Recover an existing active
+    // match from the server instead of recreating a retired code-only room.
+    if (['rooms', 'rooms/join'].includes(S.pending?.path)) clearPending();
+    await refreshLobby({ heartbeat: true });
     if (epoch !== S.epoch) return;
-    await refreshRooms();
-    if (epoch !== S.epoch) return;
-    if (!S.match && S.rooms.length) {
-      const room = S.rooms.find(m => !isEnded(m) && m.code);
-      if (room) await refreshMatch({ code: room.code, initial: true });
+    if (!S.match && typeof active === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(active)) {
+      await refreshMatch({ matchId: active, initial: true });
     }
     if (epoch !== S.epoch) return;
-    const invite = new URL(location.href).searchParams.get('room');
-    if (invite && !S.match) {
-      $('join-code').value = invite.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
-    }
+    const url = new URL(location.href);
+    if (url.searchParams.has('room')) { url.searchParams.delete('room'); history.replaceState(null, '', url.pathname + url.search + url.hash); }
+    scheduleHeartbeat();
     render();
   }
 
@@ -674,26 +794,34 @@
     render();
   });
   $('notice-close').addEventListener('click', () => show('notice', false));
-  $('create-form').addEventListener('submit', event => { event.preventDefault(); if ($('create-form').reportValidity()) void mutate('rooms', { stake: Number($('create-stake').value) }); });
-  $('join-form').addEventListener('submit', event => { event.preventDefault(); if ($('join-form').reportValidity()) void mutate('rooms/join', { code: $('join-code').value.toUpperCase().trim() }); });
-  $('join-code').addEventListener('input', () => { $('join-code').value = $('join-code').value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10); });
+  $('random-form').addEventListener('submit', event => {
+    event.preventDefault();
+    const selected = preferences();
+    if (selected && !$('random-button').disabled) void mutate('queue', selected);
+  });
+  $('lobby-stake').addEventListener('change', () => {
+    const value = Number($('lobby-stake').value);
+    if (Number.isInteger(value) && value >= 100 && value <= 100000 && value % 100 === 0) {
+      S.preferences.stake = value; writeStorage(accountKey('preferences'), S.preferences);
+    }
+  });
+  $('queue-cancel').addEventListener('click', () => { void mutate('queue/cancel', {}); });
   $('offer-form').addEventListener('submit', event => { event.preventDefault(); if ($('offer-form').reportValidity() && S.match?.status === 'waiting') void mutate('offer', { matchId: S.match.id, stake: Number($('stake').value) }); });
   $('ready-button').addEventListener('click', () => { if (S.match && !$('ready-button').disabled) void mutate('ready', { matchId: S.match.id, ready: true }); });
   $('leave-room').addEventListener('click', () => { if (S.match?.status === 'waiting') void mutate('cancel', { matchId: S.match.id }); });
-  $('refresh-rooms').addEventListener('click', () => { void refreshRooms(); });
+  $('refresh-lobby').addEventListener('click', () => { void refreshLobby({ heartbeat: true }); });
   $('retry-action').addEventListener('click', () => { if (S.pending) void mutate(S.pending.path, S.pending.body, { retry: true }); });
-  $('copy-invite').addEventListener('click', async () => {
-    if (!S.match) return;
-    const code = S.match.code;
-    const url = new URL('/', location.origin); url.searchParams.set('room', code);
-    try { await navigator.clipboard.writeText(url.href); notify('コピーしました'); }
-    catch { notify(`招待コード: ${code}`, false, true); }
-  });
   $('aim-angle').addEventListener('input', () => { if (!canShoot()) return; S.angle = Number($('aim-angle').value); updateAimControls(); });
   $('aim-power').addEventListener('input', () => { if (!canShoot()) return; S.power = Number($('aim-power').value); updateAimControls(); });
   $('aim-piece').addEventListener('change',()=>{if(!canShoot())return;S.piece=Number($('aim-piece').value);drawCurrent();});
   $('keyboard-controls').addEventListener('toggle',drawCurrent);
   for(let formation=0;formation<3;formation++) {
+    $('lobby-formation-'+formation).addEventListener('click',()=>{
+      if ($('lobby-formation-'+formation).disabled) return;
+      S.preferences.formation = formation;
+      writeStorage(accountKey('preferences'), S.preferences);
+      drawFormationChoices(true);
+    });
     $('formation-'+formation).addEventListener('click',()=>{
       if(S.match?.status==='waiting' && Number(ownPlayer()?.formation||0)!==formation) void mutate('formation',{matchId:S.match.id,formation});
     });
@@ -749,11 +877,19 @@
   $('back-lobby').addEventListener('click', () => { void enterLobby(); });
   $('rematch-button').addEventListener('click', () => {
     if (!S.match || S.busy || S.pending || !isEnded(S.match)) return;
-    const stake = Number(S.match.stake) || 100;
-    void mutate('rooms', { stake });
+    const value = Number(S.match.stake);
+    if (Number.isInteger(value) && value >= 100 && value <= 100000 && value % 100 === 0) {
+      S.preferences.stake = value; $('lobby-stake').value = value; writeStorage(accountKey('preferences'), S.preferences);
+    }
+    void enterLobby();
   });
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && S.user) schedulePoll(50); });
-  window.addEventListener('online', () => { if (S.user) schedulePoll(50); });
+  document.addEventListener('visibilitychange', () => {
+    clearTimeout(S.poll); clearTimeout(S.heartbeat);
+    if (!document.hidden && S.user) { schedulePoll(50); scheduleHeartbeat(50); }
+  });
+  window.addEventListener('online', () => { if (S.user && !document.hidden) { schedulePoll(50); scheduleHeartbeat(50); } });
+  window.addEventListener('pagehide', () => { clearTimeout(S.poll); clearTimeout(S.heartbeat); });
+  window.addEventListener('pageshow', () => { if (S.user && !document.hidden) { schedulePoll(50); scheduleHeartbeat(50); } });
   const motionChanged = () => { if (reducedMotion.matches && S.animation) { stopAnimation(); render(); } };
   if (reducedMotion.addEventListener) reducedMotion.addEventListener('change', motionChanged);
   else reducedMotion.addListener(motionChanged);

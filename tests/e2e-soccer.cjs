@@ -157,7 +157,20 @@ async function cleanup() {
   if (identityServer) await new Promise(resolve => identityServer.close(resolve));
   if (staticServer) await new Promise(resolve => staticServer.close(resolve));
   if (db) await db.end();
-  if (admin) { if (databaseCreated) await admin.query('DROP DATABASE IF EXISTS "' + dbName + '" WITH (FORCE)'); await admin.end(); }
+  if (admin) {
+    if (databaseCreated) {
+      // Let closed client sockets disappear before dropping this fixture. A
+      // forced drop can race an idle pool's shutdown and emit an uncaught
+      // administrative-termination error after every assertion has passed.
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const remaining = Number((await admin.query('SELECT count(*) AS n FROM pg_stat_activity WHERE datname=$1', [dbName])).rows[0].n);
+        if (!remaining) break;
+        await delay(50);
+      }
+      await admin.query('DROP DATABASE IF EXISTS "' + dbName + '"');
+    }
+    await admin.end();
+  }
 }
 
 async function startStatic() {

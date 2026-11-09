@@ -116,6 +116,30 @@ test('diagnostic labels reject arbitrary paths, codes, operations and methods', 
   });
 });
 
+test('request diagnostics expose only bounded query shape and fixed processing phases', async () => {
+  await capture(async entries => {
+    requestFailure('/api/lobby', 'GET', performance.now(), 400, 'INVALID_INPUT', {
+      phase: 'query', hasPathCapture: true, pathMatchesRoute: true, queryKeyCount: 1, otherQueryCount: 0,
+      query: token, member: member.name, path: token
+    });
+    assert.equal(entries[0].phase, 'query');
+    assert.equal(entries[0].hasPathCapture, true);
+    assert.equal(entries[0].pathMatchesRoute, true);
+    assert.equal(entries[0].queryKeyCount, 1);
+    assert.equal(entries[0].otherQueryCount, 0);
+    assert.equal(JSON.stringify(entries).includes(token), false);
+    assert.equal(JSON.stringify(entries).includes(member.name), false);
+    requestFailure('/api/lobby', 'GET', performance.now(), 400, 'INVALID_INPUT', {
+      phase: token, hasPathCapture: token, pathMatchesRoute: 1, queryKeyCount: 513, otherQueryCount: -1
+    });
+    assert.equal(Object.hasOwn(entries[1], 'phase'), false);
+    assert.equal(Object.hasOwn(entries[1], 'queryKeyCount'), false);
+    assert.equal(Object.hasOwn(entries[1], 'otherQueryCount'), false);
+    assert.equal(Object.hasOwn(entries[1], 'hasPathCapture'), false);
+    assert.equal(Object.hasOwn(entries[1], 'pathMatchesRoute'), false);
+  });
+});
+
 test('router logs pre-RPC rejections using normalized route without the query, body or origin', async () => {
   await capture(async entries => {
     const handler = createHandler({getConfig: () => config});

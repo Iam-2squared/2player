@@ -60,12 +60,16 @@ function upstreamFailure(upstream, operation, started, {status, code, kind} = {}
   write(event);
 }
 
-function requestFailure(pathname, method, started, status, code) {
+function requestFailure(pathname, method, started, status, code, context = {}) {
   const route = typeof pathname === 'string' && pathname.startsWith('/api/') ? pathname.slice(5) : '';
-  write({event: 'two_player_request_failure', route: ROUTES.has(route) ? route : 'unknown',
+  const event = {event: 'two_player_request_failure', route: ROUTES.has(route) ? route : 'unknown',
     method: ['GET', 'POST'].includes(method) ? method : 'OTHER', elapsedMs: elapsedMs(started),
     status: [400, 401, 403, 404, 405, 409, 410, 413, 414, 415, 429, 503, 507].includes(status) ? status : 503,
-    code: REQUEST_CODES.has(code) ? code : 'SERVICE_UNAVAILABLE'});
+    code: REQUEST_CODES.has(code) ? code : 'SERVICE_UNAVAILABLE'};
+  if (['auth', 'query', 'input', 'rpc', 'dto'].includes(context.phase)) event.phase = context.phase;
+  for (const key of ['hasPathCapture', 'pathMatchesRoute']) if (typeof context[key] === 'boolean') event[key] = context[key];
+  for (const key of ['queryKeyCount', 'otherQueryCount']) if (Number.isInteger(context[key]) && context[key] >= 0 && context[key] <= 512) event[key] = context[key];
+  write(event);
 }
 
 module.exports = {databaseCode, networkKind, upstreamFailure, requestFailure};

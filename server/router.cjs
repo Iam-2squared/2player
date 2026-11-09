@@ -167,9 +167,15 @@ function createHandler(overrides = {}) {
     securityHeaders(res);
     const started = performance.now();
     let diagnosticPath;
+    const diagnosticContext = {phase: 'auth'};
     try {
       const url = requestUrl(req);
       diagnosticPath = url.pathname;
+      const captures = url.searchParams.getAll('path');
+      diagnosticContext.hasPathCapture = captures.length > 0;
+      diagnosticContext.pathMatchesRoute = captures.length === 1 && captures[0] === url.pathname.slice(5);
+      diagnosticContext.queryKeyCount = url.searchParams.size;
+      diagnosticContext.otherQueryCount = url.searchParams.size - captures.length;
       const routes = {'/api/session': ['GET'], '/api/login': ['POST'], '/api/logout': ['POST'], '/api/rooms': ['GET', 'POST'],
         '/api/rooms/join': ['POST'], '/api/match': ['GET'], '/api/offer': ['POST'], '/api/ready': ['POST'], '/api/formation': ['POST'], '/api/input': ['POST'], '/api/cancel': ['POST'],
         '/api/lobby': ['GET'], '/api/lobby/heartbeat': ['POST'], '/api/lobby/leave': ['POST'], '/api/challenge': ['POST'],
@@ -214,12 +220,16 @@ function createHandler(overrides = {}) {
         '/api/challenge': 'challenge', '/api/challenge/accept': 'accept', '/api/challenge/decline': 'decline',
         '/api/challenge/cancel': 'invite_cancel', '/api/queue': 'queue', '/api/queue/cancel': 'queue_cancel'}[url.pathname];
       if (lobbyAction) {
+        diagnosticContext.phase = 'query';
         if (url.search) throw invalid();
+        diagnosticContext.phase = 'input';
         const input = lobbyInput(lobbyAction, req.method === 'GET' ? {} : await readJson(req), member.id);
+        diagnosticContext.phase = 'rpc';
         const result = await lobbyRpc(lobbyAction, {...input, ...lobbyActor(req, member, config, auth)}, config);
         // Resolving an abandoned shot returns game fields only. Keep the
         // already bounded lobby snapshot while the allowlist removes claims.
         const processed = await processResult(result, member, config);
+        diagnosticContext.phase = 'dto';
         return sendJson(res, 200, lobbyDTO({...result, ...processed}, member.id));
       }
       if (url.pathname === '/api/session') return sendJson(res, 200, {...publicDTO(await rpc('wallet', actor, config)), user: member});
@@ -237,7 +247,7 @@ function createHandler(overrides = {}) {
       return sendJson(res, 200, publicDTO(await processResult(result, member, config)));
     } catch (error) {
       const known = error instanceof HttpError;
-      requestFailure(diagnosticPath, req.method, started, known ? error.status : 503, known ? error.code : 'SERVICE_UNAVAILABLE');
+      requestFailure(diagnosticPath, req.method, started, known ? error.status : 503, known ? error.code : 'SERVICE_UNAVAILABLE', diagnosticContext);
       if (known && error.retryAfter) res.setHeader('Retry-After', String(error.retryAfter));
       if (!res.writableEnded) sendJson(res, known ? error.status : 503, {ok: false, error: {
         code: known ? error.code : 'SERVICE_UNAVAILABLE', message: known ? error.message : '処理を完了できませんでした。時間をおいて再試行してください。'}});

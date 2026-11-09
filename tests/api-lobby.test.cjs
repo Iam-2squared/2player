@@ -71,6 +71,28 @@ test('server-derived session hashes distinguish devices without leaking opaque K
   assert.equal(f.calls.length, 2);
 });
 
+test('authenticated Vercel source captures reach lobby and heartbeat without weakening query checks', async t => {
+  const f = await fixture(t);
+  assert.equal((await f.request('index?route=lobby&path=lobby')).status, 200);
+  assert.equal((await f.request('index?route=lobby%2Fheartbeat&path=lobby%2Fheartbeat', {})).status, 200);
+  assert.deepEqual(f.calls.map(call => call.action), ['snapshot', 'heartbeat']);
+  assert.equal(f.authCount(), 2);
+  for (const call of f.calls) {
+    assert.equal(call.input.memberId, member.id);
+    assert.equal(call.input.name, member.name);
+    assert.match(call.input.sessionId, /^[a-f0-9]{64}$/);
+    assert.deepEqual(Object.keys(call.input).sort(), ['memberId', 'name', 'sessionId']);
+  }
+  for (const query of ['route=lobby&path=logout', 'route=lobby&path=lobby&path=lobby',
+    'route=lobby&path=lobby&memberId=' + other.memberId, 'route=lobby&path=lobby&unexpected=1', 'path=lobby']) {
+    assert.equal((await f.request('index?' + query)).status, query === 'path=lobby' ? 404 : 400);
+  }
+  assert.equal((await f.request('index?route=lobby%2Fheartbeat&path=lobby%2Fheartbeat', {memberId: other.memberId})).status, 400);
+  assert.equal((await f.request('index?route=lobby%2Fheartbeat&path=lobby%2Fheartbeat', {}, {origin: 'https://foreign.invalid'})).status, 403);
+  assert.equal((await f.request('index?route=lobby&path=lobby', undefined, {cookie: ''})).status, 401);
+  assert.equal(f.calls.length, 2);
+});
+
 test('challenge and queue inputs bind actor, bound preferences and reject self or forged authority', async t => {
   const f = await fixture(t);
   const valid = {requestId: crypto.randomUUID(), targetId: other.memberId, stake: 100, formation: 2};
@@ -100,6 +122,22 @@ test('accept preserves the receiver preferences; decline and cancel cannot asser
     assert.equal((await f.request(route, {...body, memberId: other.memberId})).status, 400);
     assert.equal((await f.request(route, body)).status, 200);
     assert.equal(f.calls.at(-1).action, action);
+  }
+});
+
+test('stake-only lobby clients receive the same strict actor and compatible SQL envelope', async t => {
+  const f = await fixture(t);
+  for (const [route, action, extra] of [['queue', 'queue', {}], ['challenge', 'challenge', {targetId: other.memberId}],
+    ['challenge/accept', 'accept', {invitationId}]]) {
+    const body = {requestId: crypto.randomUUID(), stake: 200, ...extra};
+    assert.equal((await f.request(route, body)).status, 200);
+    const call = f.calls.at(-1);
+    assert.equal(call.action, action);
+    assert.equal(call.input.formation, 0);
+    assert.equal(call.input.stake, 200);
+    assert.equal(call.input.requestId, body.requestId);
+    assert.equal(call.input.memberId, member.id);
+    assert.equal((await f.request(route, {...body, memberId: other.memberId})).status, 400);
   }
 });
 

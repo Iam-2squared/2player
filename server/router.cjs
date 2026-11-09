@@ -32,13 +32,16 @@ function lobbyInput(action, body, memberId) {
     accept: ['requestId', 'invitationId', 'stake', 'formation'], decline: ['requestId', 'invitationId'],
     invite_cancel: ['requestId', 'invitationId'], queue: ['requestId', 'stake', 'formation'], queue_cancel: ['requestId']}[action];
   if (!fields) throw invalid();
-  exact(body, fields);
+  const optionalFormation = ['challenge', 'accept', 'queue'].includes(action);
+  exact(body, optionalFormation && !Object.hasOwn(body, 'formation') ? fields.filter(key => key !== 'formation') : fields);
   if ((fields.includes('requestId') && !uuid(body.requestId)) ||
       (fields.includes('targetId') && (!uuid(body.targetId) || body.targetId.toLowerCase() === memberId.toLowerCase())) ||
       (fields.includes('invitationId') && !uuid(body.invitationId)) ||
       (fields.includes('stake') && !stake(body.stake)) ||
-      (fields.includes('formation') && !integer(body.formation, 0, 2))) throw invalid();
-  return body;
+      (Object.hasOwn(body, 'formation') && !integer(body.formation, 0, 2))) throw invalid();
+  // The database chooses one common random layout. Keep the legacy RPC envelope
+  // compatible while cached clients can still send their former preference.
+  return optionalFormation && !Object.hasOwn(body, 'formation') ? {...body, formation: 0} : body;
 }
 function lobbyActor(req, member, config, auth = identity) {
   const token = auth.sessionToken(req, config);
@@ -134,6 +137,13 @@ function requestUrl(req) {
     if (!['/api/index', '/api/index.js', pathname].includes(url.pathname)) throw invalid();
     url.pathname = pathname;
     url.searchParams.delete('route');
+    // Vercel also forwards the source /api/:path* capture into the query.
+    // Consume that exact routing metadata, never arbitrary client selectors.
+    const captures = url.searchParams.getAll('path');
+    if (captures.length) {
+      if (captures.length !== 1 || captures[0] !== route) throw invalid();
+      url.searchParams.delete('path');
+    }
   }
   return url;
 }

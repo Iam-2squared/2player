@@ -210,8 +210,12 @@ test('Vercel rewrite metadata is normalized exactly and duplicate routes are rej
   assert.equal(requestUrl({url: '/api/index?route=match&code=ABCDEF'}).search, '?code=ABCDEF');
   assert.equal(requestUrl({url: '/api/index', query: {route: 'session'}}).pathname, '/api/session');
   assert.equal(requestUrl({url: '/api/index?route=formation'}).pathname, '/api/formation');
+  assert.equal(requestUrl({url: '/api/index?route=lobby&path=lobby', query: {route: 'lobby', path: 'lobby'}}).search, '');
+  assert.equal(requestUrl({url: '/api/index?route=lobby%2Fheartbeat&path=lobby%2Fheartbeat', query: {route: 'lobby/heartbeat'}}).pathname, '/api/lobby/heartbeat');
+  assert.equal(requestUrl({url: '/api/index?route=match&path=match&code=ABCDEF'}).search, '?code=ABCDEF');
   for (const req of [{url: '/api/index?route=login&route=logout'}, {url: '/api/index?route=session', query: {route: ['session']}},
-    {url: '/api/index?route=session', query: {route: 'logout'}}, {url: '/api/index?route=../session'}, {url: '/api/rooms?route=session'}]) assert.throws(() => requestUrl(req));
+    {url: '/api/index?route=session', query: {route: 'logout'}}, {url: '/api/index?route=../session'}, {url: '/api/rooms?route=session'},
+    {url: '/api/index?route=lobby&path=logout'}, {url: '/api/index?route=lobby&path=lobby&path=lobby'}]) assert.throws(() => requestUrl(req));
 });
 
 test('the actual Vercel entry accepts a rewritten anonymous session request', async () => {

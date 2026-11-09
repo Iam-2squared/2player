@@ -418,19 +418,26 @@
     }
     show('challenge-panel', incoming.childElementCount + outgoing.childElementCount > 0);
 
-    const users = S.lobby.online.filter(user => user && !sameId(user.memberId, S.user?.id));
+    const users = [
+      { memberId: S.user.id, name: S.user.name, isYou: true },
+      ...S.lobby.online.filter(user => user && String(user.memberId).toLowerCase() !== String(S.user.id).toLowerCase()),
+    ];
     text('online-count', users.length);
     show('online-empty', users.length === 0);
     const list = $('online-users'); list.replaceChildren();
     for (const user of users) {
-      const button = document.createElement('button'); button.type = 'button'; button.className = 'online-user';
-      button.dataset.challengeUser = user.memberId;
-      button.disabled = blocked || !!user.busy || S.lobby.outgoing.length > 0;
+      const button = document.createElement(user.isYou ? 'div' : 'button'); button.className = 'online-user';
+      if (user.isYou) button.dataset.selfUser = user.memberId;
+      else {
+        button.type = 'button';
+        button.dataset.challengeUser = user.memberId;
+        button.disabled = blocked || !!user.busy || S.lobby.outgoing.length > 0;
+      }
       const indicator = document.createElement('span'); indicator.className = 'online-dot'; indicator.setAttribute('aria-hidden', 'true');
       const name = document.createElement('strong'); name.textContent = user.name || '';
-      const status = document.createElement('span'); status.className = 'online-status'; status.textContent = user.busy ? '対戦中' : '›';
+      const status = document.createElement('span'); status.className = 'online-status'; status.textContent = user.isYou ? '自分' : user.busy ? '対戦中' : '›';
       button.append(indicator, name, status);
-      button.addEventListener('click', () => {
+      if (!user.isYou) button.addEventListener('click', () => {
         const selected = preferences();
         if (selected) void mutate('challenge', { targetId: user.memberId, ...selected });
       });

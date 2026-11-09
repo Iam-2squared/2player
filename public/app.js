@@ -15,10 +15,10 @@
   const S = {
     user: null, wallet: null, match: null, booting: true,
     lobby: { online: [], queue: null, incoming: [], outgoing: [] }, preferences: { stake: 100, formation: 0 },
-    lobbyGeneration: 0, lobbyRequest: 0, lobbyApplied: 0, heartbeat: null, heartbeatTask: null,
+    lobbyGeneration: 0, lobbyRequest: 0, lobbyApplied: 0, lobbyTask: null, heartbeat: null, heartbeatTask: null,
     busy: '', epoch: 0, abort: new AbortController(), poll: null,
     pending: null, angle: 270, power: 65, piece: 0, animation: null, animationQueue: [], raf: 0,
-    cancelOpen: false, offerVersion: '', noticeTimer: null,
+    cancelOpen: false, offerVersion: '', noticeTimer: null, noticeKind: '',
     dragging: null, displayedRound: null, connectionLost: false,
   };
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -53,7 +53,7 @@
     let timedOut = false;
     sessionSignal.addEventListener('abort', abort, { once: true });
     if (sessionSignal.aborted) controller.abort();
-    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 15000);
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 28000);
     try {
       const response = await fetch(`/api/${path}`, {
         method, credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
@@ -78,12 +78,21 @@
     }
   }
 
-  function notify(message, error = false, sticky = false) {
+  function notify(message, error = false, sticky = false, kind = '') {
     clearTimeout(S.noticeTimer);
+    S.noticeKind = kind;
     text('notice-text', message);
     $('notice').classList.toggle('error', error);
     show('notice', true);
     if (!sticky) S.noticeTimer = setTimeout(() => show('notice', false), 8000);
+  }
+
+  function markConnected() {
+    S.connectionLost = false;
+    if (S.noticeKind !== 'connection') return;
+    clearTimeout(S.noticeTimer);
+    S.noticeKind = '';
+    show('notice', false);
   }
 
   function setSession(user, wallet) {
@@ -100,6 +109,7 @@
     S.lobbyGeneration += 1;
     S.lobbyRequest = 0;
     S.lobbyApplied = 0;
+    S.lobbyTask = null;
     S.heartbeatTask = null;
     S.busy = '';
     S.cancelOpen = false;
@@ -116,7 +126,7 @@
     $('lobby-stake').value = S.preferences.stake;
     $('pin').value = '';
     $('login-error').hidden = true;
-    S.connectionLost = false;
+    markConnected();
   }
 
   function saveActive(matchId) {
@@ -218,6 +228,7 @@
         return;
       }
       applyData(data);
+      markConnected();
       if (operation.path === 'cancel' && data.match?.status === 'cancelled' && data.match.stake == null) {
         S.match = null;
         saveActive(null);
@@ -251,15 +262,33 @@
   async function refreshLobby({ heartbeat = false } = {}) {
     const epoch = S.epoch;
     const generation = S.lobbyGeneration;
-    const sequence = ++S.lobbyRequest;
     if (!S.user || document.hidden) return;
-    try {
-      const data = await request(heartbeat ? 'lobby/heartbeat' : 'lobby', { epoch, ...(heartbeat ? { method: 'POST', body: {} } : {}) });
-      if (epoch !== S.epoch || generation !== S.lobbyGeneration || sequence < S.lobbyApplied) return;
-      S.lobbyApplied = sequence;
-      applyData(data);
-      S.connectionLost = false;
-    } catch (error) { handlePollError(error, epoch); }
+    const active = S.lobbyTask;
+    if (active && active.epoch === epoch && active.generation === generation) {
+      await active.promise;
+      if (!heartbeat || active.heartbeat || epoch !== S.epoch || generation !== S.lobbyGeneration) return;
+      // A read does not update presence. Send a due heartbeat after it finishes,
+      // while ordinary reads and repeated heartbeats share the same snapshot.
+      return refreshLobby({ heartbeat: true });
+    }
+    const sequence = ++S.lobbyRequest;
+    const task = { epoch, generation, heartbeat, promise: null };
+    S.lobbyTask = task;
+    task.promise = (async () => {
+      try {
+        const data = await request(heartbeat ? 'lobby/heartbeat' : 'lobby', { epoch, ...(heartbeat ? { method: 'POST', body: {} } : {}) });
+        if (epoch !== S.epoch || generation !== S.lobbyGeneration || sequence < S.lobbyApplied) return;
+        S.lobbyApplied = sequence;
+        applyData(data);
+        markConnected();
+      } catch (error) {
+        if (generation !== S.lobbyGeneration || sequence < S.lobbyApplied) return;
+        handlePollError(error, epoch);
+      } finally {
+        if (S.lobbyTask === task) S.lobbyTask = null;
+      }
+    })();
+    return task.promise;
   }
 
   async function refreshMatch({ initial = false, matchId = S.match?.id } = {}) {
@@ -269,10 +298,8 @@
     try {
       const data = await request(`match?matchId=${encodeURIComponent(matchId)}`, { epoch });
       if (epoch !== S.epoch || generation !== S.lobbyGeneration || (S.match && S.match.id !== matchId)) return;
-      const reconnected = S.connectionLost;
-      S.connectionLost = false;
       applyData(data, { initial });
-      if (reconnected) notify('再接続しました。');
+      markConnected();
     } catch (error) {
       if (epoch !== S.epoch || generation !== S.lobbyGeneration) return;
       if (error.status === 404 || error.status === 403) {
@@ -292,7 +319,7 @@
       render();
     } else if (!S.connectionLost) {
       S.connectionLost = true;
-      notify('再接続中…', true, true);
+      notify('再接続中…', true, true, 'connection');
     }
   }
 
@@ -892,11 +919,11 @@
   });
   document.addEventListener('visibilitychange', () => {
     clearTimeout(S.poll); clearTimeout(S.heartbeat);
-    if (!document.hidden && S.user) { schedulePoll(50); scheduleHeartbeat(50); }
+    if (!document.hidden && S.user) { scheduleHeartbeat(0); schedulePoll(50); }
   });
-  window.addEventListener('online', () => { if (S.user && !document.hidden) { schedulePoll(50); scheduleHeartbeat(50); } });
+  window.addEventListener('online', () => { if (S.user && !document.hidden) { scheduleHeartbeat(0); schedulePoll(50); } });
   window.addEventListener('pagehide', () => { clearTimeout(S.poll); clearTimeout(S.heartbeat); });
-  window.addEventListener('pageshow', () => { if (S.user && !document.hidden) { schedulePoll(50); scheduleHeartbeat(50); } });
+  window.addEventListener('pageshow', () => { if (S.user && !document.hidden) { scheduleHeartbeat(0); schedulePoll(50); } });
   const motionChanged = () => { if (reducedMotion.matches && S.animation) { stopAnimation(); render(); } };
   if (reducedMotion.addEventListener) reducedMotion.addEventListener('change', motionChanged);
   else reducedMotion.addListener(motionChanged);

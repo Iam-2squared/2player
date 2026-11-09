@@ -52,9 +52,14 @@ function sendJson(res, status, value) {
 }
 
 async function boundedText(response, limit) {
-  if (!/^application\/json(?:;|$)/i.test(response.headers.get('content-type') || '')) throw new Error('response format');
+  const rejectBody = async message => {
+    // Rejected gateway/oversized responses must release their pooled connection.
+    await response.body?.cancel().catch(() => {});
+    throw new Error(message);
+  };
+  if (!/^application\/json(?:;|$)/i.test(response.headers.get('content-type') || '')) return rejectBody('response format');
   const length = response.headers.get('content-length');
-  if (length !== null && (!/^\d+$/.test(length) || Number(length) > limit)) throw new Error('response size');
+  if (length !== null && (!/^\d+$/.test(length) || Number(length) > limit)) return rejectBody('response size');
   const reader = response.body?.getReader();
   if (!reader) throw new Error('response missing');
   const chunks = [];

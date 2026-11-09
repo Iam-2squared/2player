@@ -227,6 +227,62 @@ async function actualScenarios(browser) {
     }
     eq((await lobby(A)).lobby.queue, null);
   });
+  await scenario('The real browser recovers from one failed lobby poll through the actual API and database', async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    let failedPolls = 0;
+    const failOnePoll = async route => {
+      if (route.request().method() === 'GET' && failedPolls === 0) {
+        failedPolls++;
+        return route.abort('failed');
+      }
+      return route.continue();
+    };
+    const responseFor = pathname => response => new URL(response.url()).pathname === pathname && response.status() === 200;
+    try {
+      await page.goto(appBase);
+      await visible(page, '#login-view');
+      await page.selectOption('#attendance', String(players[0].attendanceNumber));
+      await page.fill('#pin', players[0].pin);
+      const heartbeat = page.waitForResponse(responseFor(paths.heartbeat));
+      await page.click('#login-submit');
+      await heartbeat;
+      await visible(page, '[data-challenge-user="' + players[1].id + '"]');
+      eq(await page.locator('[data-self-user]').count(), 1, 'The actual login lists the current member once');
+      eq(await page.locator('[data-self-user] strong').textContent(), players[0].name);
+      eq(await page.locator('#online-count').textContent(), String(players.length));
+      const walletText = await page.locator('#wallet-balance').textContent();
+      eq(walletText, new Intl.NumberFormat('ja-JP').format(baseline[0].balance), 'The displayed wallet came from the actual shared database');
+      eq((await db.query('SELECT count(*)::integer AS n FROM target_private.two_player_lobby_presence WHERE member_id=$1 AND revoked_at IS NULL', [players[0].id])).rows[0].n, 2, 'The browser heartbeat created its own presence session');
+
+      // Only this failed read is intercepted. Login, heartbeat, recovery reads,
+      // and logout all cross the real local router, identity bridge and SQL RPC.
+      await context.route('**/api/lobby', failOnePoll);
+      await page.waitForFunction(() => !document.getElementById('notice').hidden && document.getElementById('notice-text').textContent === '再接続中…');
+      eq(failedPolls, 1, 'Exactly one automatic lobby read failed');
+      eq(await page.locator('[data-self-user]').count(), 1, 'A failed read keeps the current member listed');
+      eq(await page.locator('#wallet-balance').textContent(), walletText, 'A failed read preserves the last verified wallet');
+      const recovered = page.waitForResponse(responseFor(paths.lobby));
+      await context.unroute('**/api/lobby', failOnePoll);
+      await recovered;
+      await page.waitForFunction(() => document.getElementById('notice').hidden);
+      eq(await page.locator('[data-self-user]').count(), 1, 'The recovered roster still lists the current member once');
+      eq(await page.locator('[data-challenge-user="' + players[1].id + '"]').count(), 1, 'Recovery receives the real online opponent');
+      eq(await page.locator('#wallet-balance').textContent(), walletText, 'Recovery preserves the authoritative wallet');
+
+      const loggedOut = page.waitForResponse(responseFor('/api/logout'));
+      await page.click('#logout-button');
+      await loggedOut;
+      await visible(page, '#login-view');
+      eq((await db.query('SELECT count(*)::integer AS n FROM target_private.two_player_lobby_presence WHERE member_id=$1 AND revoked_at IS NULL', [players[0].id])).rows[0].n, 1, 'Browser logout revokes only its own presence session');
+      eq((await money(A)).balance, baseline[0].balance, 'The existing API session and wallet remain usable after browser logout');
+      eq(errors, [], 'The actual browser recovery flow has no uncaught errors');
+    } finally {
+      await context.close();
+    }
+  });
   await scenario('Multiple sessions preserve presence until the final session leaves or expires', async () => {
     const originalSession = (await db.query('SELECT session_id FROM target_private.two_player_lobby_presence WHERE member_id=$1 AND revoked_at IS NULL ORDER BY seen_at DESC LIMIT 1',[players[0].id])).rows[0].session_id;
     sensitive.push(originalSession);
@@ -607,7 +663,7 @@ async function main() {
     try {await cleanup();} catch(error) {failure ||= error;}
     if(databaseErrors.length)failure ||= Error('Local database pool failed: '+databaseErrors.map(item=>item.code).join(','));
     const filename = process.env.APP_ORIGIN ? 'matchmaking-public-qa.json' : process.env.MATCHMAKING_BROWSER_ONLY === '1' ? 'matchmaking-browser-qa.json' : process.env.MATCHMAKING_API_ONLY === '1' ? 'matchmaking-api-qa.json' : 'matchmaking-qa.json';
-    await fs.writeFile(path.join(reportDir, filename), JSON.stringify({ status: failure ? 'failed' : 'passed', checks, results, browserErrors, databaseErrors, hostedWrites: false, syntheticIdentity: true, apiMode: process.env.MATCHMAKING_BROWSER_ONLY === '1' ? 'locally-fulfilled' : 'actual-local-and-locally-fulfilled-browser' }, null, 2) + '\n');
+    await fs.writeFile(path.join(reportDir, filename), JSON.stringify({ status: failure ? 'failed' : 'passed', checks, results, browserErrors, databaseErrors, hostedWrites: false, syntheticIdentity: true, apiMode: process.env.MATCHMAKING_BROWSER_ONLY === '1' ? 'locally-fulfilled' : process.env.MATCHMAKING_API_ONLY === '1' ? 'actual-local-browser-api-and-database' : 'actual-local-and-locally-fulfilled-browser' }, null, 2) + '\n');
   }
   if (failure) throw failure;
   console.log(JSON.stringify({ matchmakingIntegration: 'passed', checks, scenarios: results.length, hostedWrites: false }));

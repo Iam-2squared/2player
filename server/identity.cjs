@@ -3,6 +3,8 @@ const crypto = require('node:crypto');
 const {getConfig} = require('./config.cjs');
 const {HttpError} = require('./errors.cjs');
 const {boundedText} = require('./http.cjs');
+const {networkKind, upstreamFailure} = require('./diagnostics.cjs');
+const {upstreamTimeout} = require('./deadline.cjs');
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 
@@ -47,11 +49,15 @@ function parseIdentity(result, requireToken) {
 }
 async function callIdentity(action, input, config = getConfig()) {
   if (!['login', 'verify', 'logout'].includes(action)) throw new Error('Unknown identity action');
+  const started = performance.now();
+  let status, received = false;
   try {
     const response = await fetch(config.kgsOrigin + '/api/integrations/two-player/' + action, {
       method: 'POST', headers: {'Content-Type': 'application/json', Authorization: 'Bearer ' + config.integrationSecret},
-      body: JSON.stringify(input), signal: AbortSignal.timeout(10000), redirect: 'error'
+      body: JSON.stringify(input), signal: AbortSignal.timeout(upstreamTimeout(config, 10000)), redirect: 'error'
     });
+    status = response.status;
+    received = true;
     const result = JSON.parse(await boundedText(response, 16384));
     if (!response.ok) {
       const code = typeof result?.error?.code === 'string' ? result.error.code : '';
@@ -67,7 +73,15 @@ async function callIdentity(action, input, config = getConfig()) {
     }
     if (action === 'logout') { if (result?.ok !== true) throw unavailable(); return {ok: true}; }
     return parseIdentity(result, action === 'login');
-  } catch (error) { if (error instanceof HttpError) throw error; throw unavailable(); }
+  } catch (error) {
+    if (!(error instanceof HttpError) || error.code === 'IDENTITY_UNAVAILABLE') {
+      const transport = networkKind(error);
+      upstreamFailure('identity', action, started, {status,
+        kind: !received || transport !== 'network' ? transport : status >= 400 ? 'http' : 'response'});
+    }
+    if (error instanceof HttpError) throw error;
+    throw unavailable();
+  }
 }
 async function requireMember(req, res, config = getConfig()) {
   const token = sessionToken(req, config);

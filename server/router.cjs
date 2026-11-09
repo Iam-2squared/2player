@@ -5,6 +5,8 @@ const {HttpError} = require('./errors.cjs');
 const {securityHeaders, readJson, sendJson} = require('./http.cjs');
 const identity = require('./identity.cjs');
 const store = require('./store.cjs');
+const {requestFailure} = require('./diagnostics.cjs');
+const {requestConfig} = require('./deadline.cjs');
 
 function invalid() { return new HttpError(400, '送信内容を確認してください。', 'INVALID_INPUT'); }
 function exact(body, keys) {
@@ -163,8 +165,11 @@ function createHandler(overrides = {}) {
   }
   return async function handler(req, res) {
     securityHeaders(res);
+    const started = performance.now();
+    let diagnosticPath;
     try {
       const url = requestUrl(req);
+      diagnosticPath = url.pathname;
       const routes = {'/api/session': ['GET'], '/api/login': ['POST'], '/api/logout': ['POST'], '/api/rooms': ['GET', 'POST'],
         '/api/rooms/join': ['POST'], '/api/match': ['GET'], '/api/offer': ['POST'], '/api/ready': ['POST'], '/api/formation': ['POST'], '/api/input': ['POST'], '/api/cancel': ['POST'],
         '/api/lobby': ['GET'], '/api/lobby/heartbeat': ['POST'], '/api/lobby/leave': ['POST'], '/api/challenge': ['POST'],
@@ -172,7 +177,7 @@ function createHandler(overrides = {}) {
       const allowed = routes[url.pathname];
       if (!allowed) throw new HttpError(404, '見つかりません。', 'NOT_FOUND');
       if (!allowed.includes(req.method)) { res.setHeader('Allow', allowed.join(', ')); throw new HttpError(405, 'この操作には対応していません。', 'METHOD_NOT_ALLOWED'); }
-      const config = configFor();
+      const config = requestConfig(configFor());
       if (req.method === 'POST') checkOrigin(req, config); else checkReadOrigin(req, config);
       if (url.pathname === '/api/session' && !auth.sessionToken(req, config)) return sendJson(res, 200, {ok: true, user: null, wallet: null});
       if (url.pathname === '/api/login') {
@@ -232,6 +237,7 @@ function createHandler(overrides = {}) {
       return sendJson(res, 200, publicDTO(await processResult(result, member, config)));
     } catch (error) {
       const known = error instanceof HttpError;
+      requestFailure(diagnosticPath, req.method, started, known ? error.status : 503, known ? error.code : 'SERVICE_UNAVAILABLE');
       if (known && error.retryAfter) res.setHeader('Retry-After', String(error.retryAfter));
       if (!res.writableEnded) sendJson(res, known ? error.status : 503, {ok: false, error: {
         code: known ? error.code : 'SERVICE_UNAVAILABLE', message: known ? error.message : '処理を完了できませんでした。時間をおいて再試行してください。'}});

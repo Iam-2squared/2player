@@ -2,6 +2,8 @@
 const {getConfig} = require('./config.cjs');
 const {HttpError} = require('./errors.cjs');
 const {boundedText} = require('./http.cjs');
+const {databaseCode, networkKind, upstreamFailure} = require('./diagnostics.cjs');
+const {upstreamTimeout} = require('./deadline.cjs');
 let pool;
 function unavailable() { return new HttpError(503, '共有サーバーに接続できませんでした。時間をおいて再試行してください。', 'STORAGE_UNAVAILABLE'); }
 function unpack(result) {
@@ -19,6 +21,9 @@ async function callRpc(functionName, action, input, config, timeoutMs = 12000) {
   // The function name is selected only by the two fixed server wrappers below.
   if (!['two_player_rpc', 'two_player_lobby_rpc'].includes(functionName)) throw unavailable();
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 12000) throw unavailable();
+  const started = performance.now();
+  const operation = (functionName === 'two_player_lobby_rpc' ? 'lobby.' : 'soccer.') + action;
+  let status, upstreamCode, received = false;
   try {
     if (config.databaseUrl) {
       if (!pool) {
@@ -33,10 +38,25 @@ async function callRpc(functionName, action, input, config, timeoutMs = 12000) {
     const headers = {'Content-Type': 'application/json', apikey: config.publishableKey};
     if (config.publishableKey.split('.').length === 3) headers.Authorization = 'Bearer ' + config.publishableKey;
     const response = await fetch(config.supabaseOrigin + '/rest/v1/rpc/' + functionName, {method: 'POST', headers,
-      body: JSON.stringify({p_secret: config.rpcSecret, p_action: action, p_input: input}), signal: AbortSignal.timeout(timeoutMs), redirect: 'error'});
-    if (!response.ok) { await response.body?.cancel(); throw unavailable(); }
+      body: JSON.stringify({p_secret: config.rpcSecret, p_action: action, p_input: input}), signal: AbortSignal.timeout(upstreamTimeout(config, timeoutMs)), redirect: 'error'});
+    status = response.status;
+    received = true;
+    if (!response.ok) {
+      try { upstreamCode = databaseCode(JSON.parse(await boundedText(response, 16384))?.code); }
+      catch { /* Error payloads stay private and bounded; HTTP status is sufficient. */ }
+      throw unavailable();
+    }
     return unpack(JSON.parse(await boundedText(response, 512 * 1024)));
-  } catch (error) { if (error instanceof HttpError) throw error; throw unavailable(); }
+  } catch (error) {
+    if (!(error instanceof HttpError) || error.code === 'STORAGE_UNAVAILABLE') {
+      const transport = networkKind(error);
+      upstreamFailure('storage', operation, started, {status,
+        code: upstreamCode ?? (config.databaseUrl ? databaseCode(error?.code) : undefined),
+        kind: config.databaseUrl ? 'database' : !received || transport !== 'network' ? transport : status >= 400 ? 'http' : 'response'});
+    }
+    if (error instanceof HttpError) throw error;
+    throw unavailable();
+  }
 }
 async function rpc(action, input = {}, config = getConfig()) { return callRpc('two_player_rpc', action, input, config); }
 async function lobbyRpc(action, input = {}, config = getConfig(), {timeoutMs = 12000} = {}) {

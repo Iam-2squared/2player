@@ -223,12 +223,7 @@ function browserFixture() {
         return send(200, value);
       }
       if (url.pathname === '/api/offer') { match.host.offer = input.stake; match.host.ready = false; return send(200, response()); }
-      if (url.pathname === '/api/formation') {
-        const role = user.id === match.host.memberId ? 'host' : 'guest';
-        match[role].formation = input.formation; match.formations[role === 'host' ? 0 : 1] = input.formation;
-        match.state = P.initialState(match.formations); match.host.ready = false; match.guest.ready = false;
-        return send(200, response());
-      }
+      if (url.pathname === '/api/formation') return send(409, { ok: false, error: { code: 'FORMATION_FIXED', message: '陣形は自動で決まります。' } });
       if (url.pathname === '/api/ready') {
         match.host.ready = true; match.status = 'playing'; match.escrow = 200;
         const money = wallets.get(user.id); money.balance = 9900; money.escrow = 100; money.walletRevision++;
@@ -291,12 +286,8 @@ async function runBrowserScenarios(origin) {
         await page.setViewportSize({ width: 320, height: 740 });
         await page.fill('#create-stake', '100'); await page.click('#create-room');
         await visible(page, '#room-view'); await page.waitForFunction(() => document.getElementById('room-code').textContent.includes('TEST42'));
-        eq(await page.locator('#formation-picker > button').count(), 3, 'The room offers three formation choices');
-        for (const formation of [1, 2, 0]) {
-          await page.click('#formation-' + formation);
-          await page.waitForFunction(id => document.getElementById(id).getAttribute('aria-pressed') === 'true', 'formation-' + formation);
-          eq(fixture.match.host.formation, formation, 'The formation choice reaches the local API contract');
-        }
+        eq(await page.locator('[id*="formation"]').count(), 0, 'The room offers no manual formation controls');
+        eq(fixture.match.host.formation, fixture.match.guest.formation, 'The server fixture assigns the same layout to both seats');
         await assertLayout(page, 320, 740, name + '-room-320');
         await page.click('#ready-button'); await visible(page, '#game-view');
         await page.waitForFunction(() => !document.getElementById('lock-input').disabled);
@@ -418,12 +409,8 @@ async function runApiScenarios(browser) {
     ok(created.id && created.code, 'Created room has a server identity and code');
     return (await api(guest, '/api/rooms/join', { requestId: uuid(), code: created.code })).match;
   };
-  const fund = async (guest = B, stake = 100, formations) => {
+  const fund = async (guest = B, stake = 100) => {
     let match = await make(guest, stake);
-    if (formations) {
-      await api(A, '/api/formation', { requestId: uuid(), matchId: match.id, formation: formations[0] });
-      await api(guest, '/api/formation', { requestId: uuid(), matchId: match.id, formation: formations[1] });
-    }
     await api(guest, '/api/offer', { requestId: uuid(), matchId: match.id, stake });
     await api(A, '/api/ready', { requestId: uuid(), matchId: match.id, ready: true });
     match = (await api(guest, '/api/ready', { requestId: uuid(), matchId: match.id, ready: true })).match;
@@ -441,25 +428,30 @@ async function runApiScenarios(browser) {
       before.reduce((sum, item) => sum + item.balance, 0), 'Spendable money plus match escrow is conserved');
     return after;
   };
-  await scenario('All nine formation pairs initialize sixteen pieces and changing formation clears both confirmations', async () => {
+  await scenario('New matches receive one fixed shared random formation that survives ready, rejected changes and goals', async () => {
     const P = require(path.join(root, 'public/physics.js'));
-    for (let host = 0; host < 3; host++) for (let guest = 0; guest < 3; guest++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       let match = await make(B, 100);
-      await api(A, '/api/formation', { requestId: uuid(), matchId: match.id, formation: host });
-      match = (await api(B, '/api/formation', { requestId: uuid(), matchId: match.id, formation: guest })).match;
-      eq(match.version, 2); eq(match.formations, [host, guest]); eq(match.state.players.length, 16);
-      eq(match.state, P.initialState([host, guest]), 'API/database initialization matches the engine for each formation pair');
+      const formation = match.host.formation;
+      ok(Number.isInteger(formation) && formation >= 0 && formation <= 2, 'The server chooses one of the three layouts');
+      eq(match.version, 2); eq(match.guest.formation, formation); eq(match.formations, [formation, formation]); eq(match.state.players.length, 16);
+      eq(match.state, P.initialState([formation, formation]), 'API/database initialization mirrors the shared formation');
+      const rejected = await api(A, '/api/formation', { requestId: uuid(), matchId: match.id, formation: (formation + 1) % 3 }, 409);
+      eq(rejected.error.code, 'FORMATION_FIXED');
+      eq((await get(A, match)).formations, [formation, formation]);
       await api(A, '/api/ready', { requestId: uuid(), matchId: match.id, ready: true });
-      match = (await api(B, '/api/formation', { requestId: uuid(), matchId: match.id, formation: (guest + 1) % 3 })).match;
-      eq([match.host.ready, match.guest.ready], [false, false], 'Changing formation invalidates both confirmations');
-      await api(B, '/api/formation', { requestId: uuid(), matchId: match.id, formation: guest });
-      await api(A, '/api/ready', { requestId: uuid(), matchId: match.id, ready: true });
+      await api(B, '/api/formation', { requestId: uuid(), matchId: match.id, formation: (formation + 2) % 3 }, 409);
+      match = await get(B, match);
+      eq([match.host.ready, match.guest.ready], [true, false], 'A rejected obsolete change does not alter confirmations');
+      eq(match.formations, [formation, formation]);
       match = (await api(B, '/api/ready', { requestId: uuid(), matchId: match.id, ready: true })).match;
-      await api(A, '/api/formation', { requestId: uuid(), matchId: match.id, formation: (host + 1) % 3 }, 409);
+      eq(match.formations, [formation, formation], 'Funding cannot reroll the assignment');
+      await api(A, '/api/formation', { requestId: uuid(), matchId: match.id, formation: (formation + 1) % 3 }, 409);
       await db.query('UPDATE target_private.two_player_matches SET state=$2::jsonb WHERE id=$1', [match.id, JSON.stringify(scoringState(match.turn))]);
       match = await fire(match, { angle: match.turn === 'host' ? 270 : 90, power: 100, piece: 7 });
       eq(match.lastRound.goal, match.turn === 'host' ? 'guest' : 'host');
-      eq(match.state, P.initialState([host, guest]), 'A scored goal restores the selected formation pair');
+      eq(match.formations, [formation, formation]);
+      eq(match.state, P.initialState([formation, formation]), 'A scored goal restores the same shared random formation');
       await cancel(A, match);
     }
     // This case deliberately exercises many independent rooms in one second.
@@ -525,14 +517,15 @@ async function runApiScenarios(browser) {
     await conserved(before, match); match = await cancel(A, match); await conserved(before, match);
   });
   await scenario('A server-simulated goal pays the winner once and existing gacha wallets agree', async () => {
-    const before = await balances(); let match = await fund(B, 300, [1, 2]);
+    const before = await balances(); let match = await fund(B, 300);
+    const formations = [...match.formations];
     let lastTurn;
     // Seed only the disposable fixture state; clients never supply results.
     for (let shot = 0; shot < 5 && match.status === 'playing'; shot++) {
       lastTurn = match.turn;
       await db.query('UPDATE target_private.two_player_matches SET state=$2::jsonb WHERE id=$1', [match.id, JSON.stringify(scoringState(lastTurn))]);
       match = await fire(match, { angle: lastTurn === 'host' ? 270 : 90, power: 100, piece: 7 });
-      eq(match.state, require(path.join(root, 'public/physics.js')).initialState([1, 2]), 'Each goal retains both formation choices');
+      eq(match.state, require(path.join(root, 'public/physics.js')).initialState(formations), 'Each goal retains the original shared random formation');
     }
     eq(match.status, 'finished', 'The first player to three goals completes this match'); eq(match.escrow, 0);
     const after = await conserved(before, match);

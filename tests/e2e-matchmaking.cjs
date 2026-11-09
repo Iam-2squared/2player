@@ -179,15 +179,22 @@ const paths = {
   challenge: '/api/challenge', accept: '/api/challenge/accept', decline: '/api/challenge/decline',
   withdraw: '/api/challenge/cancel', queue: '/api/queue', unqueue: '/api/queue/cancel',
 };
-const choices = (stake = 100, formation = 0) => ({ stake, formation });
+const choices = (stake = 100) => ({ stake });
 const mutation = body => ({ requestId: uuid(), ...body });
 const playerDTO = player => ({ memberId: player.id, name: player.name });
 const sameMatch = (match, a, b) => match && new Set([match.host?.memberId, match.guest?.memberId]).has(a.id) && new Set([match.host?.memberId, match.guest?.memberId]).has(b.id);
 function sessionMatch(value) { return value?.match && ['waiting', 'playing'].includes(value.match.status) ? value.match : null; }
 async function pulse(context) { return api(context, paths.heartbeat, {}); }
 async function lobby(context) { return api(context, paths.lobby); }
-async function queue(context, stake = 100, formation = 0) { return api(context, paths.queue, mutation(choices(stake, formation))); }
-async function challenge(context, player, stake = 100, formation = 0) { return api(context, paths.challenge, mutation({ targetId: player.id, ...choices(stake, formation) })); }
+async function queue(context, stake = 100) { return api(context, paths.queue, mutation(choices(stake))); }
+async function challenge(context, player, stake = 100) { return api(context, paths.challenge, mutation({ targetId: player.id, ...choices(stake) })); }
+function sharedFormation(match) {
+  const formation = match?.host?.formation;
+  ok(Number.isInteger(formation) && formation >= 0 && formation <= 2, 'The server chooses one of the three formations');
+  eq(match.guest?.formation, formation, 'Both players receive the same formation');
+  eq(match.formations, [formation, formation]);
+  return formation;
+}
 async function money(context) { return (await api(context, '/api/session')).wallet; }
 async function cancelMatch(context, match) { return api(context, '/api/cancel', mutation({ matchId: match.id })); }
 async function rawLobby(action, player, sessionId, extra = {}) { return (await db.query('SELECT public.two_player_lobby_rpc($1,$2,$3::jsonb) AS value', [secret, action, JSON.stringify({ ...playerDTO(player), sessionId, ...extra })])).rows[0].value; }
@@ -226,6 +233,10 @@ async function actualScenarios(browser) {
       await api(A, paths.queue, { ...mutation(choices()), ...forged }, 400);
     }
     eq((await lobby(A)).lobby.queue, null);
+    const rewrittenLobby = await api(A, '/api/index?route=lobby&path=lobby');
+    eq(rewrittenLobby.lobby.online.length, players.length - 1, 'The authenticated Vercel wildcard capture reaches the real lobby RPC');
+    const rewrittenHeartbeat = await api(A, '/api/index?route=lobby%2Fheartbeat&path=lobby%2Fheartbeat', {});
+    eq(rewrittenHeartbeat.lobby.online.length, players.length - 1, 'The authenticated rewritten heartbeat reaches the real lobby RPC');
   });
   await scenario('The real browser recovers from one failed lobby poll through the actual API and database', async () => {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
@@ -283,6 +294,66 @@ async function actualScenarios(browser) {
       await context.close();
     }
   });
+  await scenario('Actual browser commands omit formation and both players retain one server-selected layout', async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await context.newPage(), commands = [], errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('request', req => {
+      const pathname = new URL(req.url()).pathname;
+      if (req.method() === 'POST' && [paths.queue, paths.challenge, paths.accept].includes(pathname)) commands.push({ pathname, body: req.postDataJSON() });
+    });
+    const clickReply = async (selector, pathname) => {
+      const response = page.waitForResponse(value => new URL(value.url()).pathname === pathname);
+      await page.click(selector);
+      const reply = await response;
+      eq(reply.status(), 200, 'The real browser command succeeds: ' + pathname);
+      return reply.json();
+    };
+    const leaveEndedMatch = async () => {
+      await visible(page, '#back-lobby'); await page.click('#back-lobby'); await visible(page, '#lobby-view');
+    };
+    try {
+      await page.goto(appBase); await visible(page, '#login-view');
+      await page.selectOption('#attendance', String(players[0].attendanceNumber)); await page.fill('#pin', players[0].pin);
+      const heartbeat = page.waitForResponse(value => new URL(value.url()).pathname === paths.heartbeat && value.status() === 200);
+      await page.click('#login-submit'); await heartbeat;
+      await visible(page, '[data-challenge-user="' + players[1].id + '"]');
+      eq(await page.locator('[id*="formation"]').count(), 0, 'No manual formation controls remain in the actual page');
+      const before = await Promise.all([money(A), money(B)]);
+
+      await clickReply('#random-button', paths.queue); await visible(page, '#queue-wait');
+      eq(Object.keys(commands.find(value => value.pathname === paths.queue).body).sort(), ['requestId', 'stake']);
+      await clickReply('#queue-cancel', paths.unqueue); await page.waitForFunction(() => document.getElementById('queue-wait').hidden);
+
+      const invited = await challenge(B, players[0], 100), invitationId = invited.lobby.outgoing[0].id;
+      await visible(page, '[data-accept-invitation="' + invitationId + '"]');
+      const accepted = await clickReply('[data-accept-invitation="' + invitationId + '"]', paths.accept);
+      const formation = sharedFormation(accepted.match), initial = require(path.join(root, 'public/physics.js')).initialState([formation, formation]);
+      eq(accepted.match.state, initial, 'The actual browser receives the mirrored initial layout');
+      eq(Object.keys(commands.find(value => value.pathname === paths.accept).body).sort(), ['invitationId', 'requestId', 'stake']);
+      await visible(page, '#room-view');
+      eq(await page.locator('[id*="formation"]').count(), 0, 'The room has no formation picker');
+      await api(B, '/api/ready', mutation({ matchId: accepted.match.id, ready: true }));
+      const funded = await clickReply('#ready-button', '/api/ready');
+      eq(funded.match.status, 'playing'); eq(sharedFormation(funded.match), formation); eq(funded.match.state, initial);
+      const stored = (await db.query('SELECT host_formation,guest_formation FROM target_private.two_player_matches WHERE id=$1', [funded.match.id])).rows[0];
+      eq(stored, { host_formation: formation, guest_formation: formation }, 'The shared layout is stored by the actual SQL boundary');
+      await cancelMatch(A, funded.match); await cancelMatch(B, funded.match); await leaveEndedMatch();
+
+      const sent = await clickReply('[data-challenge-user="' + players[1].id + '"]', paths.challenge);
+      eq(Object.keys(commands.find(value => value.pathname === paths.challenge).body).sort(), ['requestId', 'stake', 'targetId']);
+      const paired = await api(B, paths.accept, mutation({ invitationId: sent.lobby.outgoing[0].id, stake: 100 }));
+      const secondFormation = sharedFormation(paired.match);
+      eq(paired.match.state, require(path.join(root, 'public/physics.js')).initialState([secondFormation, secondFormation]));
+      await visible(page, '#room-view');
+      await cancelMatch(A, paired.match); await leaveEndedMatch();
+      eq((await Promise.all([money(A), money(B)])).map(value => value.balance), before.map(value => value.balance), 'The real ready/cancel flow fully refunds both wallets');
+      await clickReply('#logout-button', '/api/logout'); await visible(page, '#login-view');
+      eq(errors, [], 'The actual browser matchmaking flow has no uncaught errors');
+    } finally {
+      await context.close();
+    }
+  });
   await scenario('Multiple sessions preserve presence until the final session leaves or expires', async () => {
     const originalSession = (await db.query('SELECT session_id FROM target_private.two_player_lobby_presence WHERE member_id=$1 AND revoked_at IS NULL ORDER BY seen_at DESC LIMIT 1',[players[0].id])).rows[0].session_id;
     sensitive.push(originalSession);
@@ -305,21 +376,24 @@ async function actualScenarios(browser) {
     } finally { await secondA.close(); }
     await login(A, players[0]); await pulse(A);
   });
-  await scenario('Direct challenges require receiver acceptance and preserve each selection without charging', async () => {
+  await scenario('Direct challenges require acceptance and assign one shared random formation without charging', async () => {
     await clearParticipants(contexts);
     const before = await Promise.all([money(A), money(B)]);
-    const offered = await challenge(A, players[1], 300, 2);
+    const offered = await api(A, paths.challenge, mutation({ targetId: players[1].id, stake: 300, formation: 2 }));
     const outgoing = offered.lobby.outgoing.find(item => item.to.memberId === players[1].id);
     ok(outgoing, 'The selected online opponent receives a challenge');
     eq(sessionMatch(offered), null);
     const incoming = (await lobby(B)).lobby.incoming.find(item => item.id === outgoing.id);
-    eq(incoming.from.memberId, players[0].id); eq(incoming.stake, 300); eq(incoming.formation, 2);
-    const acceptBody = mutation({ invitationId: outgoing.id, ...choices(700, 1) });
+    eq(incoming.from.memberId, players[0].id); eq(incoming.stake, 300);
+    const acceptBody = mutation({ invitationId: outgoing.id, stake: 700, formation: 1 });
     const accepts = await Promise.all(Array.from({ length: 6 }, () => api(B, paths.accept, acceptBody)));
     const match = accepts[0].match;
     ok(accepts.every(value => value.match?.id === match.id)); ok(sameMatch(match, players[0], players[1]));
     eq(match.status, 'waiting'); eq(match.host.offer, 300); eq(match.guest.offer, 700);
-    eq(match.host.formation, 2); eq(match.guest.formation, 1); eq(match.escrow, 0);
+    const formation = sharedFormation(match);
+    eq(match.state, require(path.join(root, 'public/physics.js')).initialState([formation, formation]));
+    ok(accepts.every(value => value.match.host.formation === formation && value.match.guest.formation === formation), 'Concurrent accept retries retain the same assignment');
+    eq(match.escrow, 0);
     eq(await Promise.all([money(A), money(B)]), before, 'Pairing reserves no money');
     eq((await lobby(C)).lobby.online.find(item => item.memberId === players[0].id).busy, true);
     await api(A, '/api/ready', mutation({ matchId: match.id, ready: true }), 409);
@@ -327,6 +401,7 @@ async function actualScenarios(browser) {
     await api(A, '/api/ready', mutation({ matchId: match.id, ready: true }));
     const funded = await api(B, '/api/ready', mutation({ matchId: match.id, ready: true }));
     eq(funded.match.status, 'playing'); eq(funded.match.state.players.length, 16); eq(funded.match.escrow, 600);
+    eq(sharedFormation(funded.match), formation, 'Funding does not reroll the common formation');
     const reserved = await Promise.all([money(A), money(B)]);
     eq(reserved.map(value => value.balance), before.map(value => value.balance - 300));
     const lateChallenge = await request(C, paths.challenge, mutation({ targetId: players[0].id, ...choices() }), null);
@@ -360,15 +435,16 @@ async function actualScenarios(browser) {
   });
   await scenario('Random pairing takes the earliest waiting player across differing stake selections', async () => {
     await clearParticipants(contexts);
-    const first = await queue(A, 100, 2); ok(first.lobby.queue); eq(first.lobby.queue.position, 1); eq(first.lobby.queue.stake,100); eq(first.lobby.queue.formation,2); eq(sessionMatch(first), null);
-    const requestB = mutation(choices(600, 1));
+    const first = await api(A, paths.queue, mutation({ stake: 100, formation: 2 })); ok(first.lobby.queue); eq(first.lobby.queue.position, 1); eq(first.lobby.queue.stake,100); eq(sessionMatch(first), null);
+    const requestB = mutation({ stake: 600, formation: 1 });
     const seconds = await Promise.all(Array.from({ length: 5 }, () => api(B, paths.queue, requestB)));
     const matchAB = seconds[0].match;
     ok(seconds.every(value => value.match?.id === matchAB.id)); ok(sameMatch(matchAB, players[0], players[1]));
     eq(matchAB.host.offer, 100); eq(matchAB.guest.offer, 600);
-    eq(matchAB.host.formation, 2); eq(matchAB.guest.formation, 1); eq(matchAB.escrow, 0);
-    const third = await queue(C, 900, 0); ok(third.lobby.queue); eq(third.lobby.queue.position, 1);
-    const fourth = await queue(D, 200, 2); ok(sameMatch(fourth.match, players[2], players[3]));
+    const formation = sharedFormation(matchAB); eq(matchAB.escrow, 0);
+    ok(seconds.every(value => value.match.host.formation === formation && value.match.guest.formation === formation), 'Concurrent queue retries cannot reroll the assignment');
+    const third = await queue(C, 900); ok(third.lobby.queue); eq(third.lobby.queue.position, 1);
+    const fourth = await queue(D, 200); ok(sameMatch(fourth.match, players[2], players[3]));
     ok(fourth.match.id !== matchAB.id);
     eq((await lobby(A)).match.id, matchAB.id, 'The earliest waiter learns the same match through normal lobby refresh');
     const cancelledAfterPair = await api(A, paths.unqueue, mutation({}));
@@ -380,8 +456,8 @@ async function actualScenarios(browser) {
     const original = (await db.query('SELECT create_count FROM target_private.two_player_rates WHERE member_id=$1',[players[0].id])).rows[0].create_count;
     await db.query('UPDATE target_private.two_player_rates SET create_count=20 WHERE member_id=$1',[players[0].id]);
     try {
-      await queue(A, 100, 2);
-      const pair = await queue(F, 600, 1);
+      await queue(A, 100);
+      const pair = await queue(F, 600);
       ok(sameMatch(pair.match, players[0], players[5]), 'The oldest queued opponent is not skipped due to host creation quota');
       eq(pair.match.host.memberId, players[5].id);
       eq(pair.match.guest.memberId, players[0].id);
@@ -405,17 +481,17 @@ async function actualScenarios(browser) {
     finally { await db.query('UPDATE target_private.system_state SET logical_bytes=$1 WHERE singleton',[beforeInvite]); }
   });
   await scenario('A cancelled wait is not resurrected by retry and concurrent direct/random matching never double-pairs', async () => {
-    const enqueueBody = mutation(choices(100, 0));
+    const enqueueBody = mutation(choices(100));
     await api(A, paths.queue, enqueueBody);
     await api(A, paths.unqueue, mutation({}));
     const old = await api(A, paths.queue, enqueueBody);
     eq(old.lobby.queue, null); eq(sessionMatch(old), null, 'A retired queue attempt is not enqueued again');
     await queue(B); eq(sessionMatch(await lobby(B)), null); await api(B, paths.unqueue, mutation({}));
-    const issued = await challenge(A, players[1], 100, 0), invitationId = issued.lobby.outgoing[0].id;
-    await queue(C, 300, 2);
+    const issued = await challenge(A, players[1], 100), invitationId = issued.lobby.outgoing[0].id;
+    await queue(C, 300);
     const race = await Promise.all([
-      request(B, paths.accept, mutation({ invitationId, ...choices(200, 1) }), null),
-      request(A, paths.queue, mutation(choices(400, 2)), null),
+      request(B, paths.accept, mutation({ invitationId, ...choices(200) }), null),
+      request(A, paths.queue, mutation(choices(400)), null),
     ]);
     ok(race.every(result => [200, 409].includes(result.status)), 'The match race returns either the unique match or a conflict');
     const active = await Promise.all([lobby(A), lobby(B), lobby(C)]);
@@ -447,14 +523,14 @@ async function actualScenarios(browser) {
     await db.query("UPDATE target_private.two_player_lobby_rates SET minute_bucket=floor(extract(epoch FROM clock_timestamp())/60)::bigint,mutations=31,day_bucket=floor(extract(epoch FROM clock_timestamp())/86400)::bigint,day_mutations=1001 WHERE member_id=$1",[players[0].id]);
     try { eq((await api(A,paths.unqueue,mutation({}))).lobby.queue,null,'Releasing a real queue is permitted at lobby rate limits'); }
     finally { await db.query('UPDATE target_private.two_player_lobby_rates SET minute_bucket=$2,mutations=$3,day_bucket=$4,day_mutations=$5 WHERE member_id=$1',[players[0].id,priorLobbyRate.minute_bucket,priorLobbyRate.mutations,priorLobbyRate.day_bucket,priorLobbyRate.day_mutations]); }
-    const issue=mutation(choices(100,0));await api(A,paths.queue,issue);await api(A,'/api/logout',{});await login(A,players[0]);await pulse(A);
+    const issue=mutation(choices(100));await api(A,paths.queue,issue);await api(A,'/api/logout',{});await login(A,players[0]);await pulse(A);
     const originalName=players[0].name;players[0].name='検証A 更新';
     try {const replay=await api(A,paths.queue,issue);eq(replay.lobby.queue,null);eq(sessionMatch(replay),null,'An old ticket remains retired across session and display-name changes');}
     finally {players[0].name=originalName;}
   });
   await scenario('Logout and expired presence remove abandoned waits without changing other sessions or money', async () => {
-    await queue(E, 500, 1); await api(E, '/api/logout', {});
-    const lone = await queue(F, 500, 1); eq(sessionMatch(lone), null, 'A logged-out queue member is not paired');
+    await queue(E, 500); await api(E, '/api/logout', {});
+    const lone = await queue(F, 500); eq(sessionMatch(lone), null, 'A logged-out queue member is not paired');
     await api(F, paths.unqueue, mutation({}));
     await login(E, players[4]); await pulse(E);
     await queue(E); await agePresence(players[4]);
@@ -485,11 +561,11 @@ function matchmakingFixture() {
   let user = null, match = null, pendingQueue = null, incoming = [], outgoing = [], held = null;
   const calls = [];
   const wallet = { balance: 10000, totalIncome: 10000, spent: 0, walletRevision: 1, gameNet: 0, escrow: 0 };
-  const makeMatch = (guest = false, stake = 100, formation = 0) => ({
+  const makeMatch = (guest = false, stake = 100) => ({
     id: uuid(), status: 'waiting', mode: 'alternating', version: 2, turn: guest ? 'guest' : 'host', round: 1, stake: null, escrow: 0,
-    host: { ...playerDTO(guest ? players[1] : players[0]), offer: stake, formation: guest ? 0 : formation, ready: guest, inputLocked: false },
-    guest: { ...playerDTO(guest ? players[0] : players[1]), offer: stake, formation: guest ? formation : 0, ready: !guest, inputLocked: false },
-    formations: guest ? [0, formation] : [formation, 0], scores: { host: 0, guest: 0 }, state: P.initialState(guest ? [0, formation] : [formation, 0]),
+    host: { ...playerDTO(guest ? players[1] : players[0]), offer: stake, formation: 1, ready: guest, inputLocked: false },
+    guest: { ...playerDTO(guest ? players[0] : players[1]), offer: stake, formation: 1, ready: !guest, inputLocked: false },
+    formations: [1, 1], scores: { host: 0, guest: 0 }, state: P.initialState([1, 1]),
     winner: null, reason: null, lastRound: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 600000).toISOString(),
   });
   const touch = () => { if (match) match.updatedAt = new Date(Date.now() + calls.length).toISOString(); };
@@ -498,7 +574,7 @@ function matchmakingFixture() {
   return {
     get calls() { return calls; }, get match() { return match; },
     addInvitation() { const item = { id: uuid(), from: playerDTO(players[1]), stake: 400, formation: 2, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString() }; incoming.push(item); return item.id; },
-    pair() { const queued = pendingQueue; pendingQueue = null; match = makeMatch(false, queued?.stake || 100, queued?.formation || 0); },
+    pair() { const queued = pendingQueue; pendingQueue = null; match = makeMatch(false, queued?.stake || 100); },
     delayLobby() { held = {}; held.promise = new Promise(resolve => { held.release = resolve; }); held.entered = new Promise(resolve => { held.enter = resolve; }); return held; },
     async handle(route) {
       const req = route.request(), url = new URL(req.url()), input = req.method() === 'POST' ? req.postDataJSON() : undefined;
@@ -524,19 +600,16 @@ function matchmakingFixture() {
       if ([paths.heartbeat, paths.leave].includes(url.pathname)) return send(200, snapshot());
       if (url.pathname === paths.challenge) {
         const to = players.find(item => item.id === input.targetId);
-        outgoing = [{ id: uuid(), to: playerDTO(to), stake: input.stake, formation: input.formation, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString() }];
+        outgoing = [{ id: uuid(), to: playerDTO(to), stake: input.stake, formation: 0, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString() }];
         return send(200, snapshot());
       }
       if (url.pathname === paths.withdraw) { outgoing = outgoing.filter(item => item.id !== input.invitationId); return send(200, snapshot()); }
       if (url.pathname === paths.decline) { incoming = incoming.filter(item => item.id !== input.invitationId); return send(200, snapshot()); }
-      if (url.pathname === paths.accept) { incoming = []; outgoing = []; pendingQueue = null; match = makeMatch(true, input.stake, input.formation); return send(200, snapshot()); }
-      if (url.pathname === paths.queue) { pendingQueue = { joinedAt: new Date().toISOString(), position: 1, stake: input.stake, formation: input.formation }; return send(200, snapshot()); }
+      if (url.pathname === paths.accept) { incoming = []; outgoing = []; pendingQueue = null; match = makeMatch(true, input.stake); return send(200, snapshot()); }
+      if (url.pathname === paths.queue) { pendingQueue = { joinedAt: new Date().toISOString(), position: 1, stake: input.stake, formation: 0 }; return send(200, snapshot()); }
       if (url.pathname === paths.unqueue) { pendingQueue = null; return send(200, snapshot()); }
       if (url.pathname === '/api/match') return send(200, snapshot());
-      if (url.pathname === '/api/formation') {
-        const role = match.guest.memberId === user.id ? 'guest' : 'host'; match[role].formation = input.formation; match.formations = [match.host.formation, match.guest.formation];
-        match.state = P.initialState(match.formations); match.host.ready = false; match.guest.ready = false; touch(); return send(200, snapshot());
-      }
+      if (url.pathname === '/api/formation') return send(409, { ok: false, error: { code: 'FORMATION_FIXED', message: '陣形は自動で決まります。' } });
       if (url.pathname === '/api/offer') { const role = match.guest.memberId === user.id ? 'guest' : 'host'; match[role].offer = input.stake; match.host.ready = false; match.guest.ready = false; touch(); return send(200, snapshot()); }
       if (url.pathname === '/api/ready') { match.status = 'playing'; match.stake = match.host.offer; match.escrow = 2 * match.stake; match.host.ready = true; match.guest.ready = true; wallet.balance -= match.stake; wallet.totalIncome -= match.stake; wallet.walletRevision++; wallet.escrow = match.stake; touch(); return send(200, snapshot()); }
       if (url.pathname === '/api/input') {
@@ -573,12 +646,12 @@ async function browserScenarios(origin) {
         await visible(page, '[data-challenge-user="' + players[1].id + '"]');
         eq(await page.locator('[data-challenge-user]').count(), players.length - 1);
         ok(await page.locator('[data-challenge-user="' + players[2].id + '"]').isDisabled(), 'Busy users cannot be directly selected');
-        eq(await page.locator('#lobby-formation-0').getAttribute('aria-pressed'), 'true');
-        await page.fill('#lobby-stake', '700'); await page.click('#lobby-formation-1');
-        eq(await page.locator('#lobby-formation-1').getAttribute('aria-pressed'), 'true');
+        eq(await page.locator('[id*="formation"]').count(), 0, 'Formation controls are absent');
+        await page.fill('#lobby-stake', '700');
         await page.click('[data-challenge-user="' + players[1].id + '"]');
         const challengeCall = fixture.calls.find(item => item.path === paths.challenge);
-        eq(challengeCall.input.targetId, players[1].id); eq(challengeCall.input.stake, 700); eq(challengeCall.input.formation, 1);
+        eq(challengeCall.input.targetId, players[1].id); eq(challengeCall.input.stake, 700);
+        eq(Object.keys(challengeCall.input).sort(), ['requestId', 'stake', 'targetId'], 'A challenge carries no formation preference');
         ok(await page.locator('#lobby-view').isVisible(), 'Sending a challenge does not start a game without acceptance');
         await visible(page, '[data-cancel-invitation]'); await page.locator('[data-cancel-invitation]').click();
         await page.waitForFunction(() => !document.querySelector('[data-cancel-invitation]'));
@@ -589,11 +662,13 @@ async function browserScenarios(origin) {
         await visible(page, '[data-accept-invitation="' + invitationId + '"]'); await page.click('[data-accept-invitation="' + invitationId + '"]');
         await visible(page, '#room-view');
         const acceptCall = fixture.calls.find(item => item.path === paths.accept);
-        eq(acceptCall.input.stake, 700); eq(acceptCall.input.formation, 1);
-        eq(await page.locator('#formation-picker > button').count(), 3);
-        eq(await page.locator('#formation-1').getAttribute('aria-pressed'), 'true', 'Receiver retains the selected formation');
+        eq(acceptCall.input.stake, 700);
+        eq(Object.keys(acceptCall.input).sort(), ['invitationId', 'requestId', 'stake'], 'Accept carries no formation preference');
+        eq(await page.locator('[id*="formation"]').count(), 0, 'The matched room has no manual formation picker');
+        sharedFormation(fixture.match);
         await page.click('#leave-room'); await visible(page, '#lobby-view');
         await page.click('#random-button'); await visible(page, '#queue-wait');
+        eq(Object.keys(fixture.calls.find(item => item.path === paths.queue).input).sort(), ['requestId', 'stake'], 'Random waiting carries no formation preference');
         ok(/待機|1/.test(await page.locator('#queue-status').textContent()));
         const otherDevice = await browser.newContext({viewport:{width:320,height:740},reducedMotion:'reduce'});
         try {
@@ -601,7 +676,7 @@ async function browserScenarios(origin) {
           const restored=await otherDevice.newPage();restored.on('pageerror',error=>browserErrors.push({browser:name,message:error.message}));
           await restored.goto(origin,{waitUntil:'networkidle'});await visible(restored,'#queue-wait');
           eq(await restored.inputValue('#lobby-stake'),'700','A fresh local preference cache displays the server accepted queue amount');
-          eq(await restored.locator('#lobby-formation-1').getAttribute('aria-pressed'),'true','A fresh device restores the queued formation');
+          eq(await restored.locator('[id*="formation"]').count(),0,'A fresh device has no formation controls');
           ok(await restored.locator('#lobby-stake').isDisabled(),'Queued choices remain locked to the accepted server settings');
         } finally {await otherDevice.close();}
         const queueSnapshot = fixture.delayLobby(); await page.click('#refresh-lobby');

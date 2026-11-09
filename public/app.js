@@ -2,19 +2,15 @@
   'use strict';
 
   const $ = id => document.getElementById(id);
-  const FORMATIONS = [
-    [[320,900],[140,790],[320,790],[500,790],[140,670],[320,670],[500,670],[320,560]],
-    [[320,900],[220,790],[420,790],[120,680],[320,680],[520,680],[230,560],[410,560]],
-    [[320,900],[190,800],[450,800],[200,680],[440,680],[160,560],[320,560],[480,560]],
-  ];
-  const INITIAL = { players: [...FORMATIONS[0].map(([x,y]) => ({x,y})), ...FORMATIONS[0].map(([x,y]) => ({x:640-x,y:960-y}))], ball: {x:320,y:480} };
+  const INITIAL_TEAM = [[320,900],[140,790],[320,790],[500,790],[140,670],[320,670],[500,670],[320,560]];
+  const INITIAL = { players: [...INITIAL_TEAM.map(([x,y]) => ({x,y})), ...INITIAL_TEAM.map(([x,y]) => ({x:640-x,y:960-y}))], ball: {x:320,y:480} };
   const MAX_PULL = 180;
   const COLORS = ['#f04d50', '#08b2d4'];
   const VIEWS = ['boot', 'login', 'lobby', 'room', 'game'];
   const fmt = value => new Intl.NumberFormat('ja-JP').format(Number(value) || 0);
   const S = {
     user: null, wallet: null, match: null, booting: true,
-    lobby: { online: [], queue: null, incoming: [], outgoing: [] }, preferences: { stake: 100, formation: 0 },
+    lobby: { online: [], queue: null, incoming: [], outgoing: [] }, preferences: { stake: 100 },
     lobbyGeneration: 0, lobbyRequest: 0, lobbyApplied: 0, lobbyTask: null, heartbeat: null, heartbeatTask: null,
     busy: '', epoch: 0, abort: new AbortController(), poll: null,
     pending: null, angle: 270, power: 65, piece: 0, animation: null, animationQueue: [], raf: 0,
@@ -121,7 +117,6 @@
     const preferences = user ? readStorage(accountKey('preferences')) : null;
     S.preferences = {
       stake: Number.isInteger(preferences?.stake) && preferences.stake >= 100 && preferences.stake <= 100000 && preferences.stake % 100 === 0 ? preferences.stake : 100,
-      formation: Number.isInteger(preferences?.formation) && preferences.formation >= 0 && preferences.formation <= 2 ? preferences.formation : 0,
     };
     $('lobby-stake').value = S.preferences.stake;
     $('pin').value = '';
@@ -384,7 +379,7 @@
     if (!Number.isInteger(stake) || stake < 100 || stake > 100000 || stake % 100 !== 0) return null;
     S.preferences.stake = stake;
     writeStorage(accountKey('preferences'), S.preferences);
-    return { stake, formation: S.preferences.formation };
+    return { stake };
   }
 
   function invitationButton(label, attribute, invitationId, path, body, disabled) {
@@ -403,9 +398,9 @@
     const queued = !!S.lobby.queue;
     const fixedChoice = S.lobby.queue || S.lobby.outgoing[0];
     if (fixedChoice && Number.isInteger(fixedChoice.stake) && fixedChoice.stake >= 100 && fixedChoice.stake <= 100000 &&
-        fixedChoice.stake % 100 === 0 && Number.isInteger(fixedChoice.formation) && fixedChoice.formation >= 0 && fixedChoice.formation <= 2) {
-      const changed = S.preferences.stake !== fixedChoice.stake || S.preferences.formation !== fixedChoice.formation;
-      S.preferences = { stake: fixedChoice.stake, formation: fixedChoice.formation };
+        fixedChoice.stake % 100 === 0) {
+      const changed = S.preferences.stake !== fixedChoice.stake;
+      S.preferences = { stake: fixedChoice.stake };
       $('lobby-stake').value = fixedChoice.stake;
       if (changed) writeStorage(accountKey('preferences'), S.preferences);
     }
@@ -416,7 +411,6 @@
     $('queue-cancel').disabled = blocked;
     $('lobby-stake').disabled = blocked || queued || S.lobby.outgoing.length > 0;
     $('refresh-lobby').disabled = blocked;
-    drawFormationChoices(true);
 
     const incoming = $('incoming-challenges'), outgoing = $('outgoing-challenges');
     incoming.replaceChildren(); outgoing.replaceChildren();
@@ -472,24 +466,6 @@
     }
   }
 
-  function drawFormationChoices(lobby = false) {
-    const prefix = lobby ? 'lobby-' : '';
-    FORMATIONS.forEach((formation, index) => {
-      const ctx = $(prefix + 'formation-canvas-' + index).getContext('2d');
-      ctx.fillStyle = '#4fa83b'; ctx.fillRect(0,0,160,120);
-      ctx.strokeStyle = '#ffffffa8'; ctx.lineWidth = 1.5;
-      ctx.strokeRect(5,5,150,110); ctx.strokeRect(48,80,64,35);
-      ctx.beginPath(); ctx.arc(80,5,22,0,Math.PI); ctx.stroke();
-      formation.forEach(([x,y]) => {
-        ctx.beginPath(); ctx.arc(x/4,(y-480)/4,5,0,Math.PI*2);
-        ctx.fillStyle = COLORS[lobby ? 0 : seat()]; ctx.fill(); ctx.strokeStyle = '#172a2d'; ctx.lineWidth=1.7; ctx.stroke();
-      });
-      const button = $(prefix + 'formation-' + index);
-      button.setAttribute('aria-pressed', String(Number(lobby ? S.preferences.formation : ownPlayer()?.formation || 0) === index));
-      button.disabled = !!S.busy || !!S.pending || (lobby && (!!S.lobby.queue || S.lobby.outgoing.length > 0));
-    });
-  }
-
   function renderRoom(blocked) {
     const match = S.match;
     const role = myRole();
@@ -515,7 +491,6 @@
     $('stake').disabled = blocked;
     $('leave-room').disabled = blocked;
     text('room-expiry', expiryCopy(match));
-    drawFormationChoices();
   }
 
   function renderGame(blocked) {
@@ -797,9 +772,9 @@
   async function restoreRoom() {
     const epoch = S.epoch;
     const active = readStorage(accountKey('active'));
-    // Old create/join operations never held funds. Recover an existing active
-    // match from the server instead of recreating a retired code-only room.
-    if (['rooms', 'rooms/join'].includes(S.pending?.path)) clearPending();
+    // Retired setup operations never held funds. Restore the authoritative
+    // match instead of replaying obsolete room or formation choices.
+    if (['rooms', 'rooms/join', 'formation'].includes(S.pending?.path)) clearPending();
     await refreshLobby({ heartbeat: true });
     if (epoch !== S.epoch) return;
     if (!S.match && typeof active === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(active)) {
@@ -849,17 +824,6 @@
   $('aim-power').addEventListener('input', () => { if (!canShoot()) return; S.power = Number($('aim-power').value); updateAimControls(); });
   $('aim-piece').addEventListener('change',()=>{if(!canShoot())return;S.piece=Number($('aim-piece').value);drawCurrent();});
   $('keyboard-controls').addEventListener('toggle',drawCurrent);
-  for(let formation=0;formation<3;formation++) {
-    $('lobby-formation-'+formation).addEventListener('click',()=>{
-      if ($('lobby-formation-'+formation).disabled) return;
-      S.preferences.formation = formation;
-      writeStorage(accountKey('preferences'), S.preferences);
-      drawFormationChoices(true);
-    });
-    $('formation-'+formation).addEventListener('click',()=>{
-      if(S.match?.status==='waiting' && Number(ownPlayer()?.formation||0)!==formation) void mutate('formation',{matchId:S.match.id,formation});
-    });
-  }
   $('lock-input').addEventListener('click',shoot);
   $('pitch').addEventListener('pointerdown',event=>{
     if(!canShoot() || S.dragging || (event.button!==0 && event.pointerType==='mouse'))return;

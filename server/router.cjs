@@ -7,6 +7,7 @@ const identity = require('./identity.cjs');
 const store = require('./store.cjs');
 const {requestFailure} = require('./diagnostics.cjs');
 const {requestConfig} = require('./deadline.cjs');
+const MAX_ROUND = 2147483647; // PostgreSQL integer storage limit, not a game-ending turn cap.
 
 function invalid() { return new HttpError(400, '送信内容を確認してください。', 'INVALID_INPUT'); }
 function exact(body, keys) {
@@ -24,7 +25,7 @@ function mutationInput(action, body) {
       (fields.includes('stake') && !stake(body.stake)) || (fields.includes('code') && !code(body.code)) ||
       (action === 'formation' && !integer(body.formation, 0, 2)) ||
       (action === 'ready' && body.ready !== true) || (action === 'input' &&
-      (!integer(body.round, 1, 40) || body.version !== 2 || !integer(body.piece, 0, 7) || !integer(body.angle, 0, 359) || !integer(body.power, 0, 100)))) throw invalid();
+      (!integer(body.round, 1, MAX_ROUND) || body.version !== 2 || !integer(body.piece, 0, 7) || !integer(body.angle, 0, 359) || !integer(body.power, 0, 100)))) throw invalid();
   return body;
 }
 function lobbyInput(action, body, memberId) {
@@ -61,7 +62,15 @@ function stateDTO(state) {
 }
 function matchDTO(match, summary = false) {
   if (!match) return null;
-  const result = select(match, ['id', 'code', 'status', 'mode', 'turn', 'stake', 'escrow', 'round', 'version', 'winner', 'reason', 'expiresAt', 'createdAt', 'updatedAt']);
+  const result = select(match, ['id', 'code', 'status', 'mode', 'turn', 'stake', 'escrow', 'round', 'version', 'winner', 'reason', 'expiresAt', 'createdAt', 'updatedAt',
+    'turnStartedAt', 'turnExpiresAt', 'serverNow']);
+  for (const field of ['turnStartedAt', 'turnExpiresAt', 'serverNow']) {
+    if (!Object.hasOwn(result, field)) continue;
+    if (result[field] === null && field !== 'serverNow') continue;
+    if (typeof result[field] !== 'string' || !Number.isFinite(Date.parse(result[field]))) {
+      throw new HttpError(503, '対戦データを確認できませんでした。', 'INVALID_MATCH_STATE');
+    }
+  }
   for (const seat of ['host', 'guest']) result[seat] = select(match[seat], ['memberId', 'name', 'offer', 'formation', 'ready', 'inputLocked', 'cancelRequested']);
   result.formations = [match.host?.formation ?? 0, match.guest?.formation ?? 0];
   result.scores = select(match.scores, ['host', 'guest']);
@@ -156,7 +165,7 @@ function createHandler(overrides = {}) {
   async function processResult(result, member, config) {
     if (!result._processing) return result;
     const claim = result._processing;
-    if (!claim || claim.version !== 2 || !uuid(claim.matchId) || !integer(claim.round, 1, 40) ||
+    if (!claim || claim.version !== 2 || !uuid(claim.matchId) || !integer(claim.round, 1, MAX_ROUND) ||
         typeof claim.claimToken !== 'string' || claim.claimToken.length > 200 || !claim.inputs?.host || !claim.inputs?.guest) {
       throw new HttpError(503, '対戦データを確認できませんでした。', 'INVALID_MATCH_STATE');
     }

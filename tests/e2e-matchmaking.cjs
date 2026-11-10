@@ -336,8 +336,22 @@ async function actualScenarios(browser) {
       await api(B, '/api/ready', mutation({ matchId: accepted.match.id, ready: true }));
       const funded = await clickReply('#ready-button', '/api/ready');
       eq(funded.match.status, 'playing'); eq(sharedFormation(funded.match), formation); eq(funded.match.state, initial);
+      await visible(page, '#game-view');
+      await page.waitForFunction(turn => document.getElementById('turn-banner').dataset.team === turn, funded.match.turn);
+      eq(await page.locator('#turn-name').textContent(), funded.match[funded.match.turn].name, 'The actual attacking player is named prominently');
+      eq(await page.locator('#turn-action').textContent(), '攻撃中');
+      ok(/^(?:1:00|0:5\d)$/.test(await page.locator('#turn-clock').textContent()), 'The actual page counts a server-owned minute');
+      eq(await page.locator('#round-label').textContent(), '1手目', 'The page has no forty-turn limit');
+      eq(await page.locator('#score-' + funded.match.turn + '-team').evaluate(node => node.classList.contains('is-attacking')), true, 'The attacking score team is emphasized');
       const stored = (await db.query('SELECT host_formation,guest_formation FROM target_private.two_player_matches WHERE id=$1', [funded.match.id])).rows[0];
       eq(stored, { host_formation: formation, guest_formation: formation }, 'The shared layout is stored by the actual SQL boundary');
+      const nextTurn = funded.match.turn === 'host' ? 'guest' : 'host';
+      await db.query("UPDATE target_private.two_player_matches SET turn_started_at=statement_timestamp()-interval '60.2 seconds',turn_expires_at=statement_timestamp()-interval '0.2 seconds' WHERE id=$1", [funded.match.id]);
+      await page.waitForFunction(turn => document.getElementById('turn-banner').dataset.team === turn, nextTurn);
+      eq(await page.locator('#turn-name').textContent(), funded.match[nextTurn].name, 'A real server timeout changes the visible attacking player');
+      eq(await page.locator('#round-label').textContent(), '2手目');
+      const passed = (await api(A, '/api/match?matchId=' + funded.match.id)).match;
+      eq(passed.turn, nextTurn); eq(passed.escrow, funded.match.escrow, 'A visible timeout preserves the funded stake');
       await cancelMatch(A, funded.match); await cancelMatch(B, funded.match); await leaveEndedMatch();
 
       const sent = await clickReply('[data-challenge-user="' + players[1].id + '"]', paths.challenge);
@@ -567,10 +581,12 @@ function matchmakingFixture() {
     guest: { ...playerDTO(guest ? players[0] : players[1]), offer: stake, formation: 1, ready: !guest, inputLocked: false },
     formations: [1, 1], scores: { host: 0, guest: 0 }, state: P.initialState([1, 1]),
     winner: null, reason: null, lastRound: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 600000).toISOString(),
+    turnStartedAt: null, turnExpiresAt: null, serverNow: new Date().toISOString(),
   });
+  const beginTurn = () => { const now = Date.now(); match.turnStartedAt = new Date(now).toISOString(); match.turnExpiresAt = new Date(now + 60000).toISOString(); };
   const touch = () => { if (match) match.updatedAt = new Date(Date.now() + calls.length).toISOString(); };
   const snapshot = () => ({ ok: true, user: user && { id: user.id, name: user.name }, wallet: user && structuredClone(wallet),
-    lobby: { online: user ? players.filter(item => item.id !== user.id).map((item, index) => ({ ...playerDTO(item), busy: index === 1 })) : [], queue: pendingQueue && structuredClone(pendingQueue), incoming: structuredClone(incoming), outgoing: structuredClone(outgoing) }, match: match && structuredClone(match) });
+    lobby: { online: user ? players.filter(item => item.id !== user.id).map((item, index) => ({ ...playerDTO(item), busy: index === 1 })) : [], queue: pendingQueue && structuredClone(pendingQueue), incoming: structuredClone(incoming), outgoing: structuredClone(outgoing) }, match: match && {...structuredClone(match), serverNow: new Date().toISOString()} });
   return {
     get calls() { return calls; }, get match() { return match; },
     addInvitation() { const item = { id: uuid(), from: playerDTO(players[1]), stake: 400, formation: 2, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString() }; incoming.push(item); return item.id; },
@@ -611,13 +627,13 @@ function matchmakingFixture() {
       if (url.pathname === '/api/match') return send(200, snapshot());
       if (url.pathname === '/api/formation') return send(409, { ok: false, error: { code: 'FORMATION_FIXED', message: '陣形は自動で決まります。' } });
       if (url.pathname === '/api/offer') { const role = match.guest.memberId === user.id ? 'guest' : 'host'; match[role].offer = input.stake; match.host.ready = false; match.guest.ready = false; touch(); return send(200, snapshot()); }
-      if (url.pathname === '/api/ready') { match.status = 'playing'; match.stake = match.host.offer; match.escrow = 2 * match.stake; match.host.ready = true; match.guest.ready = true; wallet.balance -= match.stake; wallet.totalIncome -= match.stake; wallet.walletRevision++; wallet.escrow = match.stake; touch(); return send(200, snapshot()); }
+      if (url.pathname === '/api/ready') { match.status = 'playing'; match.stake = match.host.offer; match.escrow = 2 * match.stake; match.host.ready = true; match.guest.ready = true; wallet.balance -= match.stake; wallet.totalIncome -= match.stake; wallet.walletRevision++; wallet.escrow = match.stake; beginTurn(); touch(); return send(200, snapshot()); }
       if (url.pathname === '/api/input') {
         const role = match.guest.memberId === user.id ? 'guest' : 'host';
         const inputs = { host: { angle: 0, power: 0, piece: 0 }, guest: { angle: 0, power: 0, piece: 0 } }; inputs[role] = { angle: input.angle, power: input.power, piece: input.piece };
         const result = P.simulate(match.state, [inputs.host, inputs.guest], match.formations);
         match.lastRound = { round: match.round, version: 2, inputs, goal: null, frames: result.frames, state: result.state, resultHash: 'synthetic-matchmaking-result' };
-        match.state = result.state; match.round++; match.turn = role === 'host' ? 'guest' : 'host'; touch(); return send(200, snapshot());
+        match.state = result.state; match.round++; match.turn = role === 'host' ? 'guest' : 'host'; beginTurn(); touch(); return send(200, snapshot());
       }
       if (url.pathname === '/api/cancel') { match.status = 'cancelled'; match.escrow = 0; touch(); const value = snapshot(); match = null; return send(200, value); }
       return send(404, { ok: false, error: { code: 'NOT_FOUND', message: '不明な検証ルート' } });

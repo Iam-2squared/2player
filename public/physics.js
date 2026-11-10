@@ -27,9 +27,9 @@
   // Each formation keeps a goalkeeper and seven field pieces. The opposite
   // seat receives exactly the same positions rotated through 180 degrees.
   var FORMATIONS = [
-    [[320, 900], [140, 790], [320, 790], [500, 790], [140, 670], [320, 670], [500, 670], [320, 560]],
-    [[320, 900], [220, 790], [420, 790], [120, 680], [320, 680], [520, 680], [230, 560], [410, 560]],
-    [[320, 900], [190, 800], [450, 800], [200, 680], [440, 680], [160, 560], [320, 560], [480, 560]]
+    [[320, 846], [140, 790], [320, 790], [500, 790], [140, 670], [320, 670], [500, 670], [320, 560]],
+    [[320, 846], [220, 790], [420, 790], [120, 680], [320, 680], [520, 680], [230, 560], [410, 560]],
+    [[320, 846], [190, 800], [450, 800], [200, 680], [440, 680], [160, 560], [320, 560], [480, 560]]
   ];
 
   function quantize(value) {
@@ -104,6 +104,66 @@
       }),
       ball: readPoint(state.ball, BALL_RADIUS, 'ball', true)
     };
+  }
+
+  // Clear the small goal areas before another turn begins. Integer thousandths
+  // make this placement identical to the database's timeout cleanup. Rotate the
+  // top end into bottom-end coordinates, including the piece order, so swapping
+  // seats cannot change which piece receives a contested nearby position.
+  function clearGoalAreas(state) {
+    var result = readState(state);
+    result.ball = { x: state.ball.x, y: state.ball.y };
+    var points = result.players.map(function (point) {
+      return { x: Math.round(point.x * 1000), y: Math.round(point.y * 1000) };
+    });
+    var ball = { x: Math.round(result.ball.x * 1000), y: Math.round(result.ball.y * 1000) };
+    function orient(point, top) {
+      return top ? { x: 640000 - point.x, y: 960000 - point.y } : point;
+    }
+    [false, true].forEach(function (top) {
+      for (var piece = 0; piece < TEAM_SIZE * 2; piece += 1) {
+        var index = top ? (piece + TEAM_SIZE) % (TEAM_SIZE * 2) : piece;
+        var origin = orient(points[index], top);
+        if (origin.x <= 196000 || origin.x >= 444000 || origin.y <= 846000) continue;
+        var candidates = [
+          { x: origin.x, y: 846000 },
+          { x: 196000, y: origin.y },
+          { x: 444000, y: origin.y }
+        ];
+        // A circle can block at most four of these 77 tangent-spaced nodes.
+        // With fifteen other pieces and a ball there is always a free node.
+        for (var row = 0; row < 7; row += 1) {
+          for (var column = 0; column < 11; column += 1) {
+            candidates.push({ x: 28000 + 56000 * column, y: 846000 - 56000 * row });
+          }
+        }
+        var selected = null;
+        var bestDistance = Infinity;
+        candidates.forEach(function (candidate) {
+          var dx = candidate.x - origin.x;
+          var dy = candidate.y - origin.y;
+          var distance = dx * dx + dy * dy;
+          if (distance >= bestDistance) return;
+          var normalizedBall = orient(ball, top);
+          dx = candidate.x - normalizedBall.x;
+          dy = candidate.y - normalizedBall.y;
+          if (dx * dx + dy * dy < 1764000000) return;
+          for (var other = 0; other < points.length; other += 1) {
+            if (other === index) continue;
+            var obstacle = orient(points[other], top);
+            dx = candidate.x - obstacle.x;
+            dy = candidate.y - obstacle.y;
+            if (dx * dx + dy * dy < 3136000000) return;
+          }
+          selected = candidate;
+          bestDistance = distance;
+        });
+        if (!selected) throw new RangeError('goal area has no legal exit');
+        points[index] = orient(selected, top);
+      }
+    });
+    result.players = points.map(function (point) { return { x: point.x / 1000, y: point.y / 1000 }; });
+    return result;
   }
 
   function readInputs(inputs) {
@@ -286,7 +346,11 @@
       if (step % (STEPS_PER_SECOND / FRAME_RATE) === 0 || terminal) frames.push(snapshot(bodies));
       if (terminal) break;
     }
-    return { state: goal === null ? snapshot(bodies) : initialState(selected), frames: frames, goal: goal };
+    var finalState = goal === null ? clearGoalAreas(snapshot(bodies)) : initialState(selected);
+    // The final replay frame and next-turn state must agree after the forced
+    // relocation. A scored goal keeps its goal-entry frame before the reset.
+    if (goal === null) frames[frames.length - 1] = readState(finalState);
+    return { state: finalState, frames: frames, goal: goal };
   }
 
   return Object.freeze({
@@ -302,6 +366,7 @@
     POST_RADIUS: POST_RADIUS,
     FRAME_RATE: FRAME_RATE,
     initialState: initialState,
+    clearGoalAreas: clearGoalAreas,
     simulate: simulate
   });
 });

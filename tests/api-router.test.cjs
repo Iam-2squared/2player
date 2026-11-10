@@ -71,14 +71,25 @@ test('request bodies and content types are bounded before business writes', asyn
 test('client winners, state, actor IDs and processing claims cannot reach RPC', async t => {
   const f = await fixture(t);
   const input = {requestId: randomUUID(), matchId, round: 1, version: 2, piece: 0, angle: 270, power: 80};
-  for (const field of ['winner', 'state', 'memberId', 'claimToken']) {
+  for (const field of ['winner', 'state', 'memberId', 'claimToken', 'turnStartedAt', 'turnExpiresAt', 'serverNow']) {
     const response = await f.request('input', {...input, [field]: 'forged'});
     assert.equal(response.status, 400);
   }
-  for (const bad of [{angle: 360}, {power: -1}, {power: 1.5}, {round: 41}, {version: 1}, {piece: -1}, {piece: 8}, {piece: 1.5}]) {
+  for (const bad of [{angle: 360}, {power: -1}, {power: 1.5}, {round: 0}, {round: 2147483648}, {round: 1.5}, {round: '41'},
+    {version: 1}, {piece: -1}, {piece: 8}, {piece: 1.5}]) {
     assert.equal((await f.request('input', {...input, ...bad})).status, 400);
   }
   assert.equal(f.calls.length, 0);
+});
+
+test('turn inputs continue beyond forty while retaining integer storage and actor bounds', async t => {
+  const f = await fixture(t);
+  for (const round of [40, 41, 1000, 2147483647]) {
+    const body = {requestId: randomUUID(), matchId, round, version: 2, piece: 0, angle: 270, power: 80};
+    assert.equal((await f.request('input', body)).status, 200);
+    assert.deepEqual(f.calls.at(-1), {action: 'input', input: {...body, memberId: member.id, name: member.name}});
+  }
+  assert.equal(f.calls.length, 4);
 });
 
 test('formation choices are authenticated, bounded and bind the acting member', async t => {
@@ -156,6 +167,59 @@ test('polling resumes a leased pending shot after a cold start', async t => {
   }});
   assert.equal((await f.request('match?code=ABCDEF')).status, 200);
   assert.deepEqual(actions, ['state', 'resolve']);
+});
+
+test('server processing resumes shots after forty turns without exposing the claim', async t => {
+  const actions = [];
+  const claimToken = randomUUID();
+  const f = await fixture(t, {rpc: async (action, input) => {
+    actions.push({action, input});
+    return action === 'state' ? {ok: true, wallet, match: match({round: 41}), _processing: {matchId, round: 41, version: 2, claimToken,
+      state: physics.initialState(), inputs: {host: {piece: 0, angle: 270, power: 30}, guest: {piece: 0, angle: 0, power: 0}}}} :
+      {ok: true, wallet, match: match({round: 42, turn: 'guest'})};
+  }});
+  const response = await f.request('match?matchId=' + matchId);
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.deepEqual(actions.map(value => value.action), ['state', 'resolve']);
+  assert.equal(actions[1].input.round, 41);
+  assert.equal(actions[1].input.claimToken, claimToken);
+  assert.equal(result.match.round, 42);
+  assert.equal(JSON.stringify(result).includes(claimToken), false);
+});
+
+test('invalid leased round counters cannot reach simulation or resolution', async t => {
+  let resolutions = 0, simulations = 0;
+  const f = await fixture(t, {rpc: async action => {
+    if (action === 'resolve') resolutions += 1;
+    return {ok: true, wallet, match: match(), _processing: {matchId, round: 2147483648, version: 2, claimToken: randomUUID(),
+      state: physics.initialState(), inputs: {host: {piece: 0, angle: 270, power: 30}, guest: {piece: 0, angle: 0, power: 0}}}};
+  }, simulate: () => { simulations += 1; throw new Error('invalid claim must not simulate'); }});
+  const response = await f.request('match?matchId=' + matchId);
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).error.code, 'INVALID_MATCH_STATE');
+  assert.equal(resolutions, 0);
+  assert.equal(simulations, 0);
+});
+
+test('DTOs preserve database turn clocks for matches and summaries without accepting invalid timestamps', () => {
+  const clock = {turnStartedAt: '2026-11-10T01:00:00.000Z', turnExpiresAt: '2026-11-10T01:01:00.000Z', serverNow: '2026-11-10T01:00:20.000Z'};
+  const raw = match({...clock, secretClock: 'private'});
+  const result = publicDTO({match: raw, rooms: [raw]});
+  for (const field of Object.keys(clock)) {
+    assert.equal(result.match[field], clock[field]);
+    assert.equal(result.rooms[0][field], clock[field]);
+  }
+  assert.equal(JSON.stringify(result).includes('private'), false);
+  for (const status of ['waiting', 'finished', 'cancelled']) {
+    const value = publicDTO({match: match({status, ...clock, turnStartedAt: null, turnExpiresAt: null})});
+    assert.equal(value.match.turnStartedAt, null);
+    assert.equal(value.match.turnExpiresAt, null);
+    assert.equal(value.match.serverNow, clock.serverNow);
+  }
+  for (const invalid of [{turnStartedAt: 'not-a-date'}, {turnExpiresAt: 123}, {serverNow: null}]) {
+    assert.throws(() => publicDTO({match: match({...clock, ...invalid})}), error => error.code === 'INVALID_MATCH_STATE');
+  }
 });
 
 test('DTO allowlists omit unpublished inputs and limit summaries', () => {

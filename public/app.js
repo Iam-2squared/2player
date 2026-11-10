@@ -2,7 +2,7 @@
   'use strict';
 
   const $ = id => document.getElementById(id);
-  const INITIAL_TEAM = [[320,900],[140,790],[320,790],[500,790],[140,670],[320,670],[500,670],[320,560]];
+  const INITIAL_TEAM = [[320,846],[140,790],[320,790],[500,790],[140,670],[320,670],[500,670],[320,560]];
   const INITIAL = { players: [...INITIAL_TEAM.map(([x,y]) => ({x,y})), ...INITIAL_TEAM.map(([x,y]) => ({x:640-x,y:960-y}))], ball: {x:320,y:480} };
   const MAX_PULL = 180;
   const COLORS = ['#f04d50', '#08b2d4'];
@@ -12,11 +12,13 @@
     user: null, wallet: null, match: null, booting: true,
     lobby: { online: [], queue: null, incoming: [], outgoing: [] }, preferences: { stake: 100 },
     lobbyGeneration: 0, lobbyRequest: 0, lobbyApplied: 0, lobbyTask: null, heartbeat: null, heartbeatTask: null,
-    busy: '', epoch: 0, abort: new AbortController(), poll: null,
+    busy: '', epoch: 0, abort: new AbortController(), poll: null, matchTask: null, matchSnapshot: 0,
+    turnClock: null, turnTimer: null, clockStale: true, clockGeneration: 0, expiryRefreshKey: '',
     pending: null, angle: 270, power: 65, piece: 0, animation: null, animationQueue: [], raf: 0,
     cancelOpen: false, offerVersion: '', noticeTimer: null, noticeKind: '',
     dragging: null, displayedRound: null, connectionLost: false,
   };
+  const clockReceipts = new WeakMap();
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   const text = (id, value) => { const node = $(id); if (node) node.textContent = value == null ? '' : String(value); };
   const show = (id, visible) => { const node = $(id); if (node) node.hidden = !visible; };
@@ -26,7 +28,7 @@
   const ownPlayer = () => S.match?.[myRole()];
   const seat = () => myRole() === 'guest' ? 1 : 0;
   const isEnded = m => m?.status === 'finished' || m?.status === 'cancelled';
-  const canShoot = () => !!S.user && !!S.match && S.match.status === 'playing' && S.match.turn === myRole() && !ownPlayer()?.inputLocked && !S.animation && !S.busy && !S.pending;
+  const canShoot = () => !!S.user && !!S.match && S.match.status === 'playing' && S.match.turn === myRole() && !ownPlayer()?.inputLocked && !S.animation && !S.busy && !S.pending && turnWindowOpen();
   const readStorage = key => { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } };
   const writeStorage = (key, value) => { try { value == null ? localStorage.removeItem(key) : localStorage.setItem(key, JSON.stringify(value)); } catch { /* Cookies still keep the signed-in session usable. */ } };
   const newId = () => {
@@ -43,6 +45,7 @@
   }
 
   async function request(path, { method = 'GET', body, epoch = S.epoch } = {}) {
+    const clockGeneration = S.clockGeneration;
     const sessionSignal = S.abort.signal;
     const controller = new AbortController();
     const abort = () => controller.abort();
@@ -60,6 +63,7 @@
       try { data = await response.json(); }
       catch { throw new ApiError('通信の結果を確認できませんでした。もう一度お試しください。', 'INVALID_RESPONSE', response.status); }
       if (epoch !== S.epoch) throw new DOMException('Stale session', 'AbortError');
+      if (data?.match && typeof data.match === 'object') clockReceipts.set(data.match, clockGeneration);
       if (!response.ok || data.ok === false) {
         const error = data.error;
         throw new ApiError(typeof error === 'string' ? error : error?.message || '操作を完了できませんでした。', error?.code || 'REQUEST_FAILED', response.status);
@@ -97,10 +101,18 @@
     S.abort = new AbortController();
     clearTimeout(S.poll);
     clearTimeout(S.heartbeat);
+    clearTimeout(S.turnTimer);
     stopAnimation();
     S.user = user;
     S.wallet = wallet;
     S.match = null;
+    S.matchTask = null;
+    S.matchSnapshot = 0;
+    S.turnClock = null;
+    S.turnTimer = null;
+    S.clockStale = true;
+    S.clockGeneration += 1;
+    S.expiryRefreshKey = '';
     S.lobby = { online: [], queue: null, incoming: [], outgoing: [] };
     S.lobbyGeneration += 1;
     S.lobbyRequest = 0;
@@ -158,7 +170,58 @@
     return BigInt(base)*1000n+BigInt((fraction+'000000').slice(3,6));
   }
 
+  function clockNow() {
+    return S.turnClock ? S.turnClock.serverAt + Math.max(0, performance.now() - S.turnClock.receivedAt) : null;
+  }
+
+  function turnWindowOpen() {
+    const now = clockNow();
+    return !document.hidden && !S.clockStale && now !== null && now >= S.turnClock.startsAt && now < S.turnClock.deadline;
+  }
+
+  function applyTurnClock(match) {
+    const startsAt = Date.parse(match.turnStartedAt || '');
+    const deadline = Date.parse(match.turnExpiresAt || '');
+    const serverAt = Date.parse(match.serverNow || '');
+    if (match.status !== 'playing' || ![startsAt, deadline, serverAt].every(Number.isFinite) || deadline <= startsAt) {
+      S.turnClock = null;
+      S.clockStale = true;
+      return;
+    }
+    const key = `${match.id}:${match.round}:${match.turn}:${startsAt}:${deadline}`;
+    // A delayed snapshot of the same turn must never rewind its clock.
+    const previousNow = S.turnClock?.key === key ? clockNow() : null;
+    S.turnClock = { key, startsAt, deadline, serverAt: Math.max(serverAt, previousNow ?? serverAt), receivedAt: performance.now() };
+    S.clockStale = false;
+    if (S.expiryRefreshKey !== key) S.expiryRefreshKey = '';
+  }
+
+  function scheduleTurnClock() {
+    clearTimeout(S.turnTimer);
+    S.turnTimer = null;
+    if (document.hidden || !S.user || S.match?.status !== 'playing' || !S.turnClock) return;
+    const epoch = S.epoch;
+    const now = clockNow();
+    const until = Math.max(0, (now < S.turnClock.startsAt ? S.turnClock.startsAt : S.turnClock.deadline) - now);
+    const delay = Math.min(1000, Math.max(50, until > 0 ? until % 1000 || 1000 : 1000));
+    S.turnTimer = setTimeout(() => {
+      S.turnTimer = null;
+      if (epoch !== S.epoch || document.hidden || S.match?.status !== 'playing' || !S.turnClock) return;
+      const expired = clockNow() >= S.turnClock.deadline;
+      const processing = !!S.match.host?.inputLocked || !!S.match.guest?.inputLocked;
+      if (expired) {
+        S.dragging = null;
+        if (!S.busy && !processing && S.expiryRefreshKey !== S.turnClock.key) {
+          S.expiryRefreshKey = S.turnClock.key;
+          void refreshMatch();
+        }
+      }
+      render();
+    }, delay);
+  }
+
   function applyMatch(match, initial = false) {
+    if (clockReceipts.has(match) && clockReceipts.get(match) !== S.clockGeneration) return;
     const previous = S.match;
     const changed = previous?.id !== match.id;
     if (!changed && previous) {
@@ -168,6 +231,9 @@
           Number(match.round) < Number(previous.round) || (isEnded(previous) && !isEnded(match))) return;
     }
     S.match = match;
+    if (previous && (changed || previous.round !== match.round || previous.turn !== match.turn)) S.dragging = null;
+    S.matchSnapshot += 1;
+    applyTurnClock(match);
     saveActive(match.id);
     if (changed) {
       S.lobbyGeneration += 1;
@@ -243,7 +309,8 @@
         notify('もう一度ログインしてください。', true, true);
       } else if (error.status >= 400 && error.status < 500) {
         clearPending();
-        notify(error.message, true, true);
+        const handoff = operation.path === 'input' && error.status === 409 && ['STALE_INPUT', 'NOT_YOUR_TURN', 'TURN_PENDING'].includes(error.code);
+        if (!handoff) notify(error.message, true, true);
         if (S.match) void refreshMatch(); else void refreshLobby();
       } else {
         notify('接続を確認してください。', true, true);
@@ -290,20 +357,33 @@
     const epoch = S.epoch;
     const generation = S.lobbyGeneration;
     if (!S.user || !matchId) return;
-    try {
-      const data = await request(`match?matchId=${encodeURIComponent(matchId)}`, { epoch });
-      if (epoch !== S.epoch || generation !== S.lobbyGeneration || (S.match && S.match.id !== matchId)) return;
-      applyData(data, { initial });
-      markConnected();
-    } catch (error) {
-      if (epoch !== S.epoch || generation !== S.lobbyGeneration) return;
-      if (error.status === 404 || error.status === 403) {
-        S.match = null;
-        saveActive(null);
-        notify(error.message, true, true);
-        render();
-      } else handlePollError(error, epoch);
+    const active = S.matchTask;
+    if (active && active.epoch === epoch && active.generation === generation && active.matchId === matchId && active.clockGeneration === S.clockGeneration) {
+      active.initial ||= initial;
+      return active.promise;
     }
+    const observed = S.matchSnapshot;
+    const task = { epoch, generation, matchId, initial, clockGeneration: S.clockGeneration, promise: null };
+    S.matchTask = task;
+    task.promise = (async () => {
+      try {
+        const data = await request(`match?matchId=${encodeURIComponent(matchId)}`, { epoch });
+        if (epoch !== S.epoch || generation !== S.lobbyGeneration || (S.match && S.match.id !== matchId)) return;
+        applyData(data, { initial: task.initial });
+        markConnected();
+      } catch (error) {
+        if (epoch !== S.epoch || generation !== S.lobbyGeneration || observed !== S.matchSnapshot) return;
+        if (error.status === 404 || error.status === 403) {
+          S.match = null;
+          saveActive(null);
+          notify(error.message, true, true);
+          render();
+        } else handlePollError(error, epoch);
+      } finally {
+        if (S.matchTask === task) S.matchTask = null;
+      }
+    })();
+    return task.promise;
   }
 
   function handlePollError(error, epoch) {
@@ -371,6 +451,7 @@
     if (active === 'room') renderRoom(blocked);
     if (active === 'game') renderGame(blocked);
     drawCurrent();
+    scheduleTurnClock();
   }
 
   function preferences() {
@@ -500,8 +581,17 @@
     const animating = !!S.animation;
     const mine = match.turn === role;
     const processing = match.status === 'processing' || !!match.host?.inputLocked || !!match.guest?.inputLocked;
-    text('turn-title', ended ? '終了' : animating ? (S.animation.goal ? 'GOAL' : '● ● ●') : processing ? '…' : mine ? '自分の番' : '相手の番');
-    text('round-label', `${Math.min(Number(match.round) || 1, 40)} / 40`);
+    const ready = !ended && !animating && !processing && turnWindowOpen();
+    const remaining = clockNow() === null ? null : Math.max(0, Math.min(60, Math.ceil((S.turnClock.deadline - clockNow()) / 1000)));
+    text('turn-name', ready ? match[match.turn]?.name || (mine ? '自分' : '相手') : '');
+    text('turn-action', ended ? '終了' : animating ? (S.animation.goal ? 'GOAL' : '● ● ●') : ready ? '攻撃中' : '…');
+    $('turn-banner').dataset.team = ready ? match.turn : '';
+    text('turn-clock', ended ? '' : remaining === null ? '—' : `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`);
+    $('turn-clock').setAttribute('aria-label', remaining === null ? '残り時間を確認中' : `残り${remaining}秒`);
+    $('turn-clock').classList.toggle('urgent', remaining !== null && remaining <= 10 && !ended);
+    text('round-label', `${fmt(Number(match.round) || 1)}手目`);
+    $('score-host-team').classList.toggle('is-attacking', ready && match.turn === 'host');
+    $('score-guest-team').classList.toggle('is-attacking', ready && match.turn === 'guest');
     text('score-host-name', match.host?.name || '');
     text('score-guest-name', match.guest?.name || '');
     text('score-host', scoreOf('host')); text('score-guest', scoreOf('guest'));
@@ -509,7 +599,7 @@
     text('escrow-amount', fmt(ended ? 0 : match.stake));
     text('team-label', '自分');
     $('team-label').classList.toggle('blue', role === 'guest');
-    text('lock-input', S.busy === 'input' || animating || processing ? '…' : mine ? '弾く' : '相手の番');
+    text('lock-input', S.busy === 'input' || animating || processing || (mine && !ready) ? '…' : mine ? '弾く' : '相手の番');
     $('lock-input').disabled = !canShoot();
     $('aim-angle').disabled = !canShoot(); $('aim-power').disabled = !canShoot(); $('aim-piece').disabled = !canShoot();
     $('pitch').setAttribute('aria-disabled', String(!canShoot()));
@@ -689,7 +779,16 @@
       }
       ctx.globalAlpha = 1;
     }
-    state.players.forEach((p, i) => disc(ctx, project(p, playerSeat), 28, COLORS[Math.floor(i/8)]));
+    const activeSeat = !S.animation && !isEnded(S.match) && turnWindowOpen() && !S.match?.host?.inputLocked && !S.match?.guest?.inputLocked
+      ? S.match.turn === 'host' ? 0 : 1 : -1;
+    state.players.forEach((p, i) => {
+      const point = project(p, playerSeat);
+      if (Math.floor(i / 8) === activeSeat) {
+        ctx.beginPath(); ctx.arc(point.x, point.y, 35, 0, Math.PI * 2);
+        ctx.strokeStyle = '#ffffffe6'; ctx.lineWidth = 4; ctx.stroke();
+      }
+      disc(ctx, point, 28, COLORS[Math.floor(i/8)]);
+    });
     if (aiming) {
       ctx.strokeStyle='#ffffffa8'; ctx.lineWidth=2;
       for(let i=0;i<8;i++) {
@@ -882,12 +981,15 @@
     void enterLobby();
   });
   document.addEventListener('visibilitychange', () => {
-    clearTimeout(S.poll); clearTimeout(S.heartbeat);
-    if (!document.hidden && S.user) { scheduleHeartbeat(0); schedulePoll(50); }
+    clearTimeout(S.poll); clearTimeout(S.heartbeat); clearTimeout(S.turnTimer);
+    S.clockGeneration += 1;
+    S.clockStale = true;
+    if (!document.hidden && S.user) { render(); scheduleHeartbeat(0); schedulePoll(50); }
   });
-  window.addEventListener('online', () => { if (S.user && !document.hidden) { scheduleHeartbeat(0); schedulePoll(50); } });
-  window.addEventListener('pagehide', () => { clearTimeout(S.poll); clearTimeout(S.heartbeat); });
-  window.addEventListener('pageshow', () => { if (S.user && !document.hidden) { scheduleHeartbeat(0); schedulePoll(50); } });
+  window.addEventListener('offline', () => { S.clockGeneration += 1; S.clockStale = true; render(); });
+  window.addEventListener('online', () => { if (S.user && !document.hidden) { S.clockGeneration += 1; S.clockStale = true; render(); scheduleHeartbeat(0); schedulePoll(50); } });
+  window.addEventListener('pagehide', () => { S.clockGeneration += 1; S.clockStale = true; clearTimeout(S.poll); clearTimeout(S.heartbeat); clearTimeout(S.turnTimer); });
+  window.addEventListener('pageshow', event => { if (S.user && !document.hidden) { if (event.persisted) { S.clockGeneration += 1; S.clockStale = true; render(); } scheduleHeartbeat(0); schedulePoll(50); } });
   const motionChanged = () => { if (reducedMotion.matches && S.animation) { stopAnimation(); render(); } };
   if (reducedMotion.addEventListener) reducedMotion.addEventListener('change', motionChanged);
   else reducedMotion.addListener(motionChanged);

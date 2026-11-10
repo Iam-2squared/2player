@@ -87,8 +87,8 @@ test('three distinct balanced formations include a goalkeeper and no initial ove
     assertFrame(state);
     assertSeparated(state);
     assert.deepEqual(flip(state), state);
-    assert.deepEqual(state.players[0], { x: 320, y: 900 });
-    assert.deepEqual(state.players[8], { x: 320, y: 60 });
+    assert.deepEqual(state.players[0], { x: 320, y: 846 });
+    assert.deepEqual(state.players[8], { x: 320, y: 114 });
   }
   for (let host = 0; host < 3; host++) {
     for (let guest = 0; guest < 3; guest++) {
@@ -105,6 +105,126 @@ test('a stationary shot rests without introducing movement for every formation',
     assert.deepEqual(result.state, state);
     for (const frame of result.frames) assert.deepEqual(frame, state);
   }
+});
+
+function insideGoalArea(point) {
+  return point.x > 196 && point.x < 444 && (point.y < 114 || point.y > 846);
+}
+
+function crowdedGoalState() {
+  const bottom = Array.from({ length: 8 }, (_, i) => ({ x: 250 + (i % 4) * 40, y: 888 + Math.floor(i / 4) * 32 }));
+  return {
+    players: [...bottom, ...bottom.map(point => ({ x: 640 - point.x, y: 960 - point.y }))],
+    ball: { x: 320, y: 480 }
+  };
+}
+
+test('every piece leaves either goal area while exact outside tangencies stay fixed', () => {
+  for (let index = 0; index < 16; index++) {
+    for (const y of [60, 900]) {
+      const state = physics.initialState();
+      state.players[index] = { x: 320, y };
+      const before = JSON.stringify(state);
+      const result = physics.clearGoalAreas(state);
+      assert.ok(result.players.every(point => !insideGoalArea(point)));
+      assert.deepEqual(result.ball, state.ball);
+      assert.equal(JSON.stringify(state), before, 'cleanup does not mutate the source');
+      assertSeparated(result);
+      assert.deepEqual(physics.clearGoalAreas(result), result);
+    }
+  }
+  const tangent = physics.initialState();
+  tangent.players[0] = { x: 196, y: 900 };
+  tangent.players[8] = { x: 444, y: 60 };
+  assert.deepEqual(physics.clearGoalAreas(tangent), tangent);
+});
+
+test('crowded goal areas have finite collision-free exits and preserve rotated seats', () => {
+  const state = crowdedGoalState();
+  const result = physics.clearGoalAreas(state);
+  assertFrame(result);
+  assertSeparated(result);
+  assert.ok(result.players.every(point => !insideGoalArea(point)));
+  assert.deepEqual(result.ball, state.ball);
+  assert.deepEqual(physics.clearGoalAreas(result), result);
+  assert.deepEqual(physics.clearGoalAreas(flip(state)), flip(result));
+});
+
+test('seeded goal-area cleanup stays idempotent, collision-free and rotation invariant', () => {
+  let seed = 85439;
+  const random = max => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed % max;
+  };
+  const quantizedFlip = state => {
+    const result = flip(state);
+    result.players.forEach(point => {
+      point.x = Math.round(point.x * 1000) / 1000;
+      point.y = Math.round(point.y * 1000) / 1000;
+    });
+    return result;
+  };
+  for (let sample = 0; sample < 100; sample++) {
+    const state = {
+      players: Array.from({ length: 16 }, () => ({ x: (28000 + random(584001)) / 1000, y: (28000 + random(904001)) / 1000 })),
+      ball: { x: (14000 + random(612001)) / 1000, y: (14000 + random(932001)) / 1000 }
+    };
+    const result = physics.clearGoalAreas(state);
+    assertFrame(result);
+    assert.ok(result.players.every(point => !insideGoalArea(point)));
+    assert.deepEqual(physics.clearGoalAreas(result), result);
+    assert.deepEqual(physics.clearGoalAreas(quantizedFlip(state)), quantizedFlip(result));
+    assert.deepEqual(result.ball, state.ball);
+    for (let i = 0; i < 16; i++) {
+      if (!insideGoalArea(state.players[i])) {
+        assert.deepEqual(result.players[i], state.players[i]);
+        continue;
+      }
+      for (let j = 0; j < 16; j++) {
+        if (i !== j) assert.ok(Math.hypot(result.players[i].x - result.players[j].x, result.players[i].y - result.players[j].y) >= 55.999999);
+      }
+      assert.ok(Math.hypot(result.players[i].x - result.ball.x, result.players[i].y - result.ball.y) >= 41.999999);
+    }
+  }
+});
+
+test('blocked boundary projections use nearby free space without moving the ball or unaffected pieces', () => {
+  const state = physics.initialState();
+  state.players[0] = { x: 320, y: 900 };
+  state.players[1] = { x: 320, y: 846 };
+  state.players[2] = { x: 196, y: 900 };
+  state.players[3] = { x: 444, y: 900 };
+  const result = physics.clearGoalAreas(state);
+  assert.ok(!insideGoalArea(result.players[0]));
+  assert.notDeepEqual(result.players[0], { x: 320, y: 846 });
+  assert.notDeepEqual(result.players[0], { x: 196, y: 900 });
+  assert.notDeepEqual(result.players[0], { x: 444, y: 900 });
+  assert.deepEqual(result.players.slice(1), state.players.slice(1));
+  assert.deepEqual(result.ball, state.ball);
+  assertSeparated(result);
+
+  const ballBlocked = physics.initialState();
+  ballBlocked.players[0] = { x: 320, y: 900 };
+  ballBlocked.ball = { x: 320, y: 846 };
+  const cleared = physics.clearGoalAreas(ballBlocked);
+  assert.deepEqual(cleared.ball, ballBlocked.ball);
+  assertSeparated(cleared);
+  assert.deepEqual(physics.clearGoalAreas(flip(ballBlocked)), flip(cleared));
+  ballBlocked.ball = { x: 320.123456, y: 846.123456 };
+  assert.deepEqual(physics.clearGoalAreas(ballBlocked).ball, ballBlocked.ball, 'cleanup preserves the ball without rounding it');
+});
+
+test('settled non-goal replay ends at the cleaned next-turn positions', () => {
+  const state = physics.initialState();
+  state.players[0] = { x: 320, y: 900 };
+  state.players[8] = { x: 320, y: 60 };
+  const result = physics.simulate(state, [REST, REST]);
+  assert.equal(result.goal, null);
+  assert.deepEqual(result.frames[0], state);
+  assert.deepEqual(result.frames.at(-1), result.state);
+  assert.deepEqual(result.state, physics.initialState());
+  result.frames.at(-1).players[0].x = 0;
+  assert.equal(result.state.players[0].x, 320, 'the replay and next state do not alias');
 });
 
 test('each seat launches its selected own piece rather than a fixed player', () => {

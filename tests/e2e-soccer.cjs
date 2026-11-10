@@ -40,6 +40,13 @@ function scoringState(seat) {
 const redact = value => sensitive.reduce((text, item) => text.split(item).join('[credential]'), String(value));
 function eq(actual, expected, label) { checks++; assert.deepEqual(actual, expected, label); }
 function ok(value, label) { checks++; assert.ok(value, label); }
+function outsideGoalAreas(state, label) {
+  eq(state.players.length, 16, label + ': all pieces retained');
+  for (const point of state.players) {
+    ok(point.x >= 28 && point.x <= 612 && point.y >= 28 && point.y <= 932, label + ': bounded piece');
+    ok(!(point.x > 196 && point.x < 444 && (point.y < 114 || point.y > 846)), label + ': no piece intersects a small goal area');
+  }
+}
 async function scenario(name, run) {
   const started = Date.now();
   try { await run(); results.push({ name, status: 'passed', durationMs: Date.now() - started }); console.log('PASS ' + name); }
@@ -188,17 +195,18 @@ function browserFixture() {
   const P = require(path.join(root, 'public/physics.js'));
   let user = null, match = null, calls = [], delayed = null;
   const wallets = new Map(players.map(player => [player.id, { balance: 10000, totalIncome: 10000, spent: 0, walletRevision: 1, gameNet: 0, escrow: 0 }]));
-  const response = () => ({ ok: true, user: user && { id: user.id, name: user.name }, wallet: user && wallets.get(user.id), ...(match ? { match: structuredClone(match) } : {}) });
+  const response = () => ({ ok: true, user: user && { id: user.id, name: user.name }, wallet: user && wallets.get(user.id), ...(match ? { match: {...structuredClone(match), serverNow: new Date().toISOString()} } : {}) });
   const newMatch = () => ({ id: uuid(), code: 'TEST42', status: 'waiting', mode: 'alternating', turn: 'host', stake: 100, escrow: 0, round: 1, version: 2, formations: [0, 0],
     host: { memberId: players[0].id, name: players[0].name, offer: 100, ready: false, inputLocked: false, formation: 0 },
     guest: { memberId: players[1].id, name: players[1].name, offer: 100, ready: true, inputLocked: false, formation: 0 },
     scores: { host: 0, guest: 0 }, state: P.initialState(), lastRound: null, winner: null, reason: null,
-    expiresAt: new Date(Date.now() + 120000).toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    expiresAt: new Date(Date.now() + 120000).toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), turnStartedAt: null, turnExpiresAt: null, serverNow: new Date().toISOString() });
+  const beginTurn = () => { const now = Date.now(); match.turnStartedAt = new Date(now).toISOString(); match.turnExpiresAt = new Date(now + 60000).toISOString(); };
   return {
     get calls() { return calls; }, get match() { return match; },
-    hostTurn() { match.turn = 'host'; match.round++; match.lastRound = null; match.state = P.initialState(); match.host.inputLocked = false; },
+    hostTurn() { match.turn = 'host'; match.round++; match.lastRound = null; match.state = P.initialState(); match.host.inputLocked = false; beginTurn(); },
     lockHost() { match.host.inputLocked = true; },
-    guestGame() { match = newMatch(); match.status = 'playing'; match.turn = 'guest'; match.host.ready = true; match.guest.ready = true; match.escrow = 200; },
+    guestGame() { match = newMatch(); match.status = 'playing'; match.turn = 'guest'; match.host.ready = true; match.guest.ready = true; match.escrow = 200; beginTurn(); },
     delayNextMatch() { delayed = {}; delayed.promise = new Promise(resolve => { delayed.resolve = resolve; }); delayed.entered = new Promise(resolve => { delayed.enter = resolve; }); return delayed; },
     async handle(route) {
       const req = route.request(), url = new URL(req.url());
@@ -225,7 +233,7 @@ function browserFixture() {
       if (url.pathname === '/api/offer') { match.host.offer = input.stake; match.host.ready = false; return send(200, response()); }
       if (url.pathname === '/api/formation') return send(409, { ok: false, error: { code: 'FORMATION_FIXED', message: '陣形は自動で決まります。' } });
       if (url.pathname === '/api/ready') {
-        match.host.ready = true; match.status = 'playing'; match.escrow = 200;
+        match.host.ready = true; match.status = 'playing'; match.escrow = 200; beginTurn();
         const money = wallets.get(user.id); money.balance = 9900; money.escrow = 100; money.walletRevision++;
         return send(200, response());
       }
@@ -235,7 +243,7 @@ function browserFixture() {
         const inputs = { host: { angle: 0, power: 0, piece: 0 }, guest: { angle: 0, power: 0, piece: 0 } }; inputs[role] = { angle: input.angle, power: input.power, piece: input.piece };
         const result = P.simulate(match.state, [inputs.host, inputs.guest], match.formations);
         match.lastRound = { round: match.round, version: 2, inputs, goal: result.goal === 0 ? 'host' : result.goal === 1 ? 'guest' : null, frames: result.frames, state: result.state, resultHash: 'local-fixture-result' };
-        match.state = result.state; match.round++; match.turn = role === 'host' ? 'guest' : 'host';
+        match.state = result.state; match.round++; match.turn = role === 'host' ? 'guest' : 'host'; beginTurn();
         return send(200, response());
       }
       if (url.pathname === '/api/cancel') { match.status = 'cancelled'; match.escrow = 0; return send(200, response()); }
@@ -418,6 +426,9 @@ async function runApiScenarios(browser) {
     return match;
   };
   const fire = async (match, input = { angle: 0, power: 0, piece: 0 }, overrides = {}) => {
+    // Local test time travel avoids waiting for every replay grace period. The
+    // dedicated clock scenario below verifies that early real input is refused.
+    await db.query("UPDATE target_private.two_player_matches SET turn_started_at=statement_timestamp()-interval '1 second',turn_expires_at=statement_timestamp()+interval '59 seconds' WHERE id=$1 AND status='playing' AND turn_started_at>statement_timestamp()", [match.id]);
     const actor = match.turn === 'host' ? A : B;
     return (await api(actor, '/api/input', { requestId: uuid(), matchId: match.id, round: match.round, version: 2, piece: 0, ...input, ...overrides })).match;
   };
@@ -553,17 +564,89 @@ async function runApiScenarios(browser) {
     const mismatches = (await db.query('SELECT count(*)::integer AS n FROM target_private.wallet_finance_projection(NULL) l JOIN target_private.profiles p USING(member_id) WHERE p.member_id=ANY($1::uuid[]) AND (p.total_points,p.spent_points,p.calculus_points,p.birthday_points,p.casino_net,p.calculus_forgiven_points) IS DISTINCT FROM (l.total_points,l.spent_points,l.calculus_points,l.birthday_points,l.casino_net,l.calculus_forgiven_points)', [[players[0].id, players[1].id]])).rows[0].n;
     eq(mismatches, 0, 'The authoritative finance projection includes soccer, source income and the gacha receipt');
   });
-  await scenario('Forty motionless alternating turns draw and refund both players exactly once', async () => {
+  await scenario('More than forty turns and 256 match requests remain playable without creating or refunding money', async () => {
     const before = await balances(); let match = await fund(B, 100);
-    for (let turn = 0; turn < 40 && match.status === 'playing'; turn++) match = await fire(match);
-    eq(match.status, 'finished'); eq(match.escrow, 0);
-    eq((await balances()).map(item => item.balance), before.map(item => item.balance));
-    for (let repeat = 0; repeat < 3; repeat++) await get(A, match);
-    eq((await balances()).map(item => item.balance), before.map(item => item.balance), 'Draw refund is idempotent');
+    const startingRound = match.round;
+    for (let turn = 0; turn < 520; turn++) {
+      // Match length is unlimited; the ordinary per-minute transport limit is
+      // intentionally retained and is advanced only in this disposable fixture.
+      if (turn % 40 === 0) await db.query('UPDATE target_private.two_player_rates SET minute_bucket=minute_bucket-1');
+      match = await fire(match);
+      eq(match.status, 'playing', 'A quiet turn never causes a move-count draw');
+    }
+    eq(match.round, startingRound + 520); eq(match.escrow, 200);
+    ok((await db.query('SELECT min(n)::integer AS n FROM(SELECT count(*) AS n FROM target_private.two_player_requests WHERE match_id=$1 GROUP BY member_id) per_member', [match.id])).rows[0].n > 256, 'Each player exceeds the former per-match request cap without stopping play');
+    eq((await db.query("SELECT count(*)::integer AS n FROM target_private.two_player_wallet_events WHERE match_id=$1 AND phase='settle'", [match.id])).rows[0].n, 0, 'A long game has no premature settlement');
+    outsideGoalAreas(match.state, 'A long game');
+    await conserved(before, match);
+    await db.query('UPDATE target_private.two_player_rates SET minute_bucket=minute_bucket-1');
+    match = await cancel(A, match); eq(match.status, 'cancelled');
+    eq((await balances()).map(item => item.balance), before.map(item => item.balance), 'Explicit mutual cancellation still refunds exactly once');
+  });
+  await scenario('Replay grace precedes a full server minute and early input cannot consume the next turn', async () => {
+    let match = await fund(B, 100);
+    eq(Date.parse(match.turnExpiresAt) - Date.parse(match.turnStartedAt), 60000, 'Funding begins a server-owned one-minute turn');
+    ok(Number.isFinite(Date.parse(match.serverNow)), 'The response supplies the server clock');
+    const before = await balances();
+    match = await fire(match, {angle: 180, power: 100, piece: 4});
+    const expectedGrace = Math.min(6, (match.lastRound.frames.length - 1) / 20);
+    ok(expectedGrace > 0, 'This actual shot has a visible replay grace period');
+    eq(Date.parse(match.turnExpiresAt) - Date.parse(match.turnStartedAt), 60000, 'Playback never shortens the next one-minute turn');
+    ok(Date.parse(match.turnStartedAt) > Date.parse(match.serverNow), 'The next turn starts after server replay grace');
+    const actor = match.turn === 'host' ? A : B;
+    const command = {requestId: uuid(), matchId: match.id, round: match.round, version: 2, piece: 0, angle: 0, power: 0};
+    const early = await api(actor, '/api/input', command, 409);
+    eq(early.error.code, 'TURN_PENDING');
+    const unchanged = await get(A, match);
+    eq(unchanged.round, match.round); eq(unchanged.turn, match.turn); eq(unchanged.turnExpiresAt, match.turnExpiresAt);
+    eq((await balances()).map(value => value.balance), before.map(value => value.balance), 'Rejected early input has no financial effect');
+    outsideGoalAreas(match.state, 'The settled actual shot');
+    eq(match.lastRound.frames.at(-1), match.state, 'The authoritative final replay frame includes forced relocation');
+    match = await fire(match);
+    await cancel(A, match);
+  });
+  await scenario('A server deadline passes a turn once under concurrent reads and stale input while preserving escrow', async () => {
+    const before = await balances(); let match = await fund(B, 100);
+    const originalTurn = match.turn, originalRound = match.round;
+    const receipts = (await db.query('SELECT jsonb_agg(to_jsonb(e) ORDER BY member_id,phase) AS events FROM target_private.two_player_wallet_events e WHERE match_id=$1', [match.id])).rows[0].events;
+    const clock = (await db.query("UPDATE target_private.two_player_matches SET turn_started_at=statement_timestamp()-interval '60.2 seconds',turn_expires_at=statement_timestamp()-interval '0.2 seconds' WHERE id=$1 RETURNING turn_expires_at::text,expires_at", [match.id])).rows[0];
+    const actor = originalTurn === 'host' ? A : B;
+    const expiredCommand = {requestId: uuid(), matchId: match.id, round: originalRound, version: 2, piece: 0, angle: 0, power: 0};
+    const replies = await Promise.all([get(A, match), get(B, match), get(A, match), request(actor, '/api/input', expiredCommand, null)]);
+    const stale = replies.at(-1); eq(stale.status, 409, 'An expired shot racing a read cannot consume the next turn');
+    match = await get(A, match);
+    eq(match.round, originalRound + 1); eq(match.turn, originalTurn === 'host' ? 'guest' : 'host');
+    eq(match.status, 'playing'); eq(match.escrow, 200);
+    const stored = (await db.query('SELECT extract(epoch FROM(turn_expires_at-$2::timestamptz)) AS clock_shift,expires_at FROM target_private.two_player_matches WHERE id=$1', [match.id, clock.turn_expires_at])).rows[0];
+    eq(Number(stored.clock_shift), 60, 'A deadline advances by exactly one server minute');
+    eq(stored.expires_at, clock.expires_at, 'Automatic passes never extend abandoned-game expiry');
+    eq((await db.query('SELECT jsonb_agg(to_jsonb(e) ORDER BY member_id,phase) AS events FROM target_private.two_player_wallet_events e WHERE match_id=$1', [match.id])).rows[0].events, receipts, 'Timeout does not pay, reserve, refund or rewrite financial receipts');
+    eq((await db.query('SELECT count(*)::integer AS n FROM target_private.two_player_moves WHERE match_id=$1', [match.id])).rows[0].n, 0, 'A pass never fabricates a shot');
+    outsideGoalAreas(match.state, 'A timed-out turn');
+    await conserved(before, match);
+    match = await fire(match);
+    eq(match.round, originalRound + 2, 'The opponent can play the next real turn');
+    await cancel(A, match);
+  });
+  await scenario('Background catch-up keeps minute boundaries and goal-area pieces are removed before the next turn', async () => {
+    let match = await fund(B, 100);
+    const originalTurn = match.turn, originalRound = match.round;
+    const crowded = structuredClone(match.state);
+    crowded.players[0] = {x:320,y:900}; crowded.players[8] = {x:320,y:60};
+    const originalBall = structuredClone(crowded.ball);
+    const clock = (await db.query("UPDATE target_private.two_player_matches SET state=$2::jsonb,turn_started_at=statement_timestamp()-interval '241 seconds',turn_expires_at=statement_timestamp()-interval '181 seconds' WHERE id=$1 RETURNING turn_expires_at::text,expires_at", [match.id, JSON.stringify(crowded)])).rows[0];
+    match = await get(B, match);
+    eq(match.round, originalRound + 4); eq(match.turn, originalTurn, 'Four elapsed turns preserve turn parity');
+    outsideGoalAreas(match.state, 'Background catch-up'); eq(match.state.ball, originalBall, 'A forced relocation never moves the ball');
+    const stored = (await db.query('SELECT extract(epoch FROM(turn_expires_at-$2::timestamptz)) AS clock_shift,expires_at FROM target_private.two_player_matches WHERE id=$1', [match.id, clock.turn_expires_at])).rows[0];
+    eq(Number(stored.clock_shift), 240); eq(stored.expires_at, clock.expires_at);
+    const current = structuredClone(match);
+    match = await get(A, match); eq(match.round, current.round); eq(match.state, current.state, 'Repeated reads do not relocate or pass again');
+    await cancel(A, match);
   });
   await scenario('Expired funded matches refund on reconnect and cancellation cannot pay again', async () => {
     const before = await balances(); let match = await fund(B, 100);
-    await db.query("UPDATE target_private.two_player_matches SET expires_at=now()-interval '1 minute' WHERE id=$1", [match.id]);
+    await db.query("UPDATE target_private.two_player_matches SET expires_at=now()-interval '1 minute',turn_started_at=now()-interval '11 minutes',turn_expires_at=now()-interval '10 minutes' WHERE id=$1", [match.id]);
     match = await get(B, match); eq(match.status, 'cancelled'); eq(match.escrow, 0);
     eq((await balances()).map(item => item.balance), before.map(item => item.balance));
     await cancel(A, match); eq((await balances()).map(item => item.balance), before.map(item => item.balance));
@@ -580,10 +663,12 @@ async function runApiScenarios(browser) {
     const P = require(path.join(root, 'public/physics.js'));
     const outcome = P.simulate(claim.state, [claim.inputs.host, claim.inputs.guest], claim.formations);
     const resolveInput = { memberId: actor.id, name: actor.name, requestId: uuid(), matchId: match.id, round: match.round, version: 2, claimToken: claim.claimToken, state: outcome.state, frames: outcome.frames, goal: null };
+    await db.query("UPDATE target_private.two_player_matches SET turn_started_at=statement_timestamp()-interval '121 seconds',turn_expires_at=statement_timestamp()-interval '61 seconds' WHERE id=$1", [match.id]);
     await db.query("UPDATE target_private.two_player_moves SET claim_until=now()-interval '1 second' WHERE match_id=$1 AND round=$2", [match.id, match.round]);
     eq((await rpc('resolve', resolveInput)).error.code, 'STALE_CLAIM', 'An expired processing lease cannot publish a result');
     claim = (await rpc('state', { memberId: actor.id, name: actor.name, matchId: match.id }))._processing;
     ok(claim && claim.claimToken !== resolveInput.claimToken, 'Reconnect claims abandoned immutable input with a new lease');
+    eq(claim.round, input.round, 'An accepted pending shot is recovered before timeout processing can skip its turn');
     resolveInput.claimToken = claim.claimToken;
     const resolutions = await Promise.all(Array.from({ length: 8 }, () => rpc('resolve', resolveInput)));
     ok(resolutions.every(value => value.ok), 'Concurrent same-result resolutions succeed');
@@ -591,6 +676,7 @@ async function runApiScenarios(browser) {
     eq((await logicalBytes()) - acceptedBytes, move.charged_bytes - 393216, 'Resolution releases unused reserved result bytes without another receipt charge');
     eq((await db.query('SELECT count(*)::int AS n FROM target_private.two_player_moves WHERE match_id=$1', [match.id])).rows[0].n, 1);
     match = await get(A, match);
+    eq(match.round, input.round + 1, 'The recovered accepted shot advances exactly once, without an extra deadline pass');
     const before = await balances(), priorCapacity = await logicalBytes();
     await db.query('UPDATE target_private.system_state SET logical_bytes=104857600 WHERE singleton');
     try { match = await cancel(A, match); eq(match.status, 'cancelled'); eq(match.escrow, 0); }

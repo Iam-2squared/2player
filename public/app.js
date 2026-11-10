@@ -28,6 +28,11 @@
   const sameId = (a, b) => a != null && b != null && String(a) === String(b);
   const myRole = (m = S.match) => sameId(m?.host?.memberId, S.user?.id) ? 'host' : sameId(m?.guest?.memberId, S.user?.id) ? 'guest' : null;
   const ownPlayer = () => S.match?.[myRole()];
+  const offeredStake = (match, role) => validStake(match?.[role]?.offer) ? match[role].offer : 0;
+  const fundedStake = (match, role) => validStake(match?.[role]?.stake) ? match[role].stake : validStake(match?.stake) ? match.stake : 0;
+  const matchPot = match => match?.status === 'waiting'
+    ? offeredStake(match, 'host') + offeredStake(match, 'guest')
+    : fundedStake(match, 'host') + fundedStake(match, 'guest');
   const seat = () => myRole() === 'guest' ? 1 : 0;
   const isEnded = m => m?.status === 'finished' || m?.status === 'cancelled';
   const canShoot = () => !!S.user && !!S.match && S.match.status === 'playing' && S.match.turn === myRole() && !ownPlayer()?.inputLocked && !S.animation && !S.busy && !S.pending && turnWindowOpen();
@@ -233,6 +238,9 @@
           Number(match.round) < Number(previous.round) || (isEnded(previous) && !isEnded(match))) return;
     }
     S.match = match;
+    if (S.pending?.path === 'ready' && S.pending.body?.matchId === match.id &&
+        (match.status !== 'waiting' || S.pending.body.expectedHostOffer !== match.host?.offer ||
+          S.pending.body.expectedGuestOffer !== match.guest?.offer)) clearPending();
     if (previous && (changed || previous.round !== match.round || previous.turn !== match.turn)) S.dragging = null;
     S.matchSnapshot += 1;
     applyTurnClock(match);
@@ -563,12 +571,15 @@
       $('stake').value = own?.offer || 100;
       S.offerVersion = offerVersion;
     }
-    const equalOffers = !!match.guest && Number(match.host?.offer) === Number(match.guest?.offer);
-    text('room-pot', fmt((Number(own?.offer) || 0) * 2));
-    text('room-info', match.guest && !equalOffers ? '賭け額を合わせてください' : '');
-    text('ready-hint', own?.ready ? '相手の準備待ち' : '同額・両者の準備完了で開始');
-    text('ready-button', S.busy === 'ready' ? '…' : own?.ready ? '✓ 準備完了' : '準備完了');
-    $('ready-button').disabled = blocked || !equalOffers || !!own?.ready;
+    const validOffers = !!match.guest && validStake(match.host?.offer) && validStake(match.guest?.offer);
+    const unequalOffers = validOffers && match.host.offer !== match.guest.offer;
+    const draftMatchesOffer = validStake(Number($('stake').value)) && Number($('stake').value) === own?.offer;
+    text('room-pot', fmt(matchPot(match)));
+    text('room-info', '');
+    text('ready-hint', own?.ready ? unequalOffers ? '相手の許可待ち' : '相手の準備待ち' : '');
+    text('ready-button', S.busy === 'ready' ? '…' : own?.ready ? unequalOffers ? '✓ 許可済み' : '✓ 準備完了' : unequalOffers ? '許可' : '準備完了');
+    $('ready-button').setAttribute('aria-label', `${fmt(match.host?.offer)}轟・${fmt(match.guest?.offer)}轟で${unequalOffers ? '許可' : '準備完了'}`);
+    $('ready-button').disabled = blocked || !validOffers || !draftMatchesOffer || !!own?.ready;
     $('offer-submit').disabled = blocked;
     $('stake').disabled = blocked;
     $('leave-room').disabled = blocked;
@@ -596,8 +607,8 @@
     text('score-host-name', match.host?.name || '');
     text('score-guest-name', match.guest?.name || '');
     text('score-host', scoreOf('host')); text('score-guest', scoreOf('guest'));
-    text('game-pot', fmt((Number(match.stake) || 0) * 2));
-    text('escrow-amount', fmt(ended ? 0 : match.stake));
+    text('game-pot', fmt(matchPot(match)));
+    text('escrow-amount', fmt(ended ? 0 : fundedStake(match, role)));
     text('team-label', '自分');
     $('team-label').classList.toggle('blue', role === 'guest');
     text('lock-input', S.busy === 'input' || animating || processing || (mine && !ready) ? '…' : mine ? '弾く' : '相手の番');
@@ -620,10 +631,12 @@
     const cancelled = match.status === 'cancelled';
     const draw = !cancelled && (!match.winner || match.winner === 'draw');
     const win = !draw && !cancelled && (match.winner === myRole() || sameId(match.winner, S.user?.id));
-    const stake = Number(match.stake) || 0;
+    const role = myRole();
+    const stake = fundedStake(match, role);
+    const opponentStake = fundedStake(match, role === 'host' ? 'guest' : 'host');
     text('result-title', cancelled ? '中止' : draw ? '引き分け' : win ? 'WIN' : 'LOSE');
-    text('result-amount', cancelled || draw ? stake ? `${fmt(stake)} 轟返却` : '預かりなし' : win ? `${fmt(stake * 2)} 轟獲得` : `−${fmt(stake)} 轟`);
-    text('result-copy', cancelled || draw ? '全額返却済み' : win ? `収支 ＋${fmt(stake)} 轟` : '');
+    text('result-amount', cancelled || draw ? stake ? `${fmt(stake)} 轟返却` : '預かりなし' : win ? `${fmt(matchPot(match))} 轟獲得` : `−${fmt(stake)} 轟`);
+    text('result-copy', cancelled || draw ? '全額返却済み' : win ? `収支 ＋${fmt(opponentStake)} 轟` : '');
     text('result-balance', fmt(S.wallet?.balance));
     $('rematch-button').disabled = !!S.busy || !!S.pending;
   }
@@ -916,7 +929,13 @@
   });
   $('queue-cancel').addEventListener('click', () => { void mutate('queue/cancel', {}); });
   $('offer-form').addEventListener('submit', event => { event.preventDefault(); if ($('offer-form').reportValidity() && S.match?.status === 'waiting') void mutate('offer', { matchId: S.match.id, stake: Number($('stake').value) }); });
-  $('ready-button').addEventListener('click', () => { if (S.match && !$('ready-button').disabled) void mutate('ready', { matchId: S.match.id, ready: true }); });
+  $('stake').addEventListener('input', () => { if (S.match?.status === 'waiting') renderRoom(!!S.busy || !!S.pending); });
+  $('ready-button').addEventListener('click', () => {
+    const match = S.match;
+    if (match?.status === 'waiting' && !$('ready-button').disabled) void mutate('ready', {
+      matchId: match.id, ready: true, expectedHostOffer: match.host.offer, expectedGuestOffer: match.guest.offer,
+    });
+  });
   $('leave-room').addEventListener('click', () => { if (S.match?.status === 'waiting') void mutate('cancel', { matchId: S.match.id }); });
   $('refresh-lobby').addEventListener('click', () => { void refreshLobby({ heartbeat: true }); });
   $('retry-action').addEventListener('click', () => { if (S.pending) void mutate(S.pending.path, S.pending.body, { retry: true }); });
@@ -975,7 +994,7 @@
   $('back-lobby').addEventListener('click', () => { void enterLobby(); });
   $('rematch-button').addEventListener('click', () => {
     if (!S.match || S.busy || S.pending || !isEnded(S.match)) return;
-    const value = Number(S.match.stake);
+    const value = fundedStake(S.match, myRole());
     if (validStake(value)) {
       S.preferences.stake = value; $('lobby-stake').value = value; writeStorage(accountKey('preferences'), S.preferences);
     }

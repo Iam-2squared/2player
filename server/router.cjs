@@ -21,9 +21,13 @@ function code(value) { return typeof value === 'string' && /^[A-Z0-9]{6,10}$/.te
 function mutationInput(action, body) {
   const fields = {create: ['stake'], join: ['code'], offer: ['matchId', 'stake'], ready: ['matchId', 'ready'],
     input: ['matchId', 'round', 'version', 'piece', 'angle', 'power'], formation: ['matchId', 'formation'], cancel: ['matchId']}[action];
+  if (action === 'ready' && (Object.hasOwn(body, 'expectedHostOffer') || Object.hasOwn(body, 'expectedGuestOffer'))) {
+    fields.push('expectedHostOffer', 'expectedGuestOffer');
+  }
   exact(body, ['requestId', ...fields]);
   if (!uuid(body.requestId) || (fields.includes('matchId') && !uuid(body.matchId)) ||
       (fields.includes('stake') && !stake(body.stake)) || (fields.includes('code') && !code(body.code)) ||
+      (fields.includes('expectedHostOffer') && (!stake(body.expectedHostOffer) || !stake(body.expectedGuestOffer))) ||
       (action === 'formation' && !integer(body.formation, 0, 2)) ||
       (action === 'ready' && body.ready !== true) || (action === 'input' &&
       (!integer(body.round, 1, MAX_ROUND) || body.version !== 2 || !integer(body.piece, 0, 7) || !integer(body.angle, 0, 359) || !integer(body.power, 0, 100)))) throw invalid();
@@ -63,7 +67,7 @@ function stateDTO(state) {
 }
 function matchDTO(match, summary = false) {
   if (!match) return null;
-  const result = select(match, ['id', 'code', 'status', 'mode', 'turn', 'stake', 'escrow', 'round', 'version', 'winner', 'reason', 'expiresAt', 'createdAt', 'updatedAt',
+  const result = select(match, ['id', 'code', 'status', 'mode', 'turn', 'stake', 'pot', 'escrow', 'round', 'version', 'winner', 'reason', 'expiresAt', 'createdAt', 'updatedAt',
     'turnStartedAt', 'turnExpiresAt', 'serverNow']);
   for (const field of ['turnStartedAt', 'turnExpiresAt', 'serverNow']) {
     if (!Object.hasOwn(result, field)) continue;
@@ -72,7 +76,15 @@ function matchDTO(match, summary = false) {
       throw new HttpError(503, '対戦データを確認できませんでした。', 'INVALID_MATCH_STATE');
     }
   }
-  for (const seat of ['host', 'guest']) result[seat] = select(match[seat], ['memberId', 'name', 'offer', 'formation', 'ready', 'inputLocked', 'cancelRequested']);
+  if (Object.hasOwn(result, 'pot') && (!integer(result.pot, 0, 2 * MAX_WALLET_AMOUNT) || result.pot % 100 !== 0)) {
+    throw new HttpError(503, '対戦データを確認できませんでした。', 'INVALID_MATCH_STATE');
+  }
+  for (const seat of ['host', 'guest']) {
+    result[seat] = select(match[seat], ['memberId', 'name', 'offer', 'stake', 'formation', 'ready', 'inputLocked', 'cancelRequested']);
+    if (result[seat] && Object.hasOwn(result[seat], 'stake') && result[seat].stake !== null && !stake(result[seat].stake)) {
+      throw new HttpError(503, '対戦データを確認できませんでした。', 'INVALID_MATCH_STATE');
+    }
+  }
   result.formations = [match.host?.formation ?? 0, match.guest?.formation ?? 0];
   result.scores = select(match.scores, ['host', 'guest']);
   result.state = stateDTO(match.state);

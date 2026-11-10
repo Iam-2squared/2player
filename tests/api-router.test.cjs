@@ -140,6 +140,43 @@ test('large funded stake, doubled pot and wallet amounts retain exact numeric DT
   assert.equal(Number.isSafeInteger(result.match.escrow), true);
 });
 
+test('ready binds both displayed offers while retaining the legacy same-stake request shape', async t => {
+  const f = await fixture(t);
+  const legacy = {requestId: randomUUID(), matchId, ready: true};
+  assert.equal((await f.request('ready', legacy)).status, 200);
+  for (const [expectedHostOffer, expectedGuestOffer] of [[300, 700], [3000000000, 5000000000], [10000000000000, 100]]) {
+    const body = {requestId: randomUUID(), matchId, ready: true, expectedHostOffer, expectedGuestOffer};
+    assert.equal((await f.request('ready', body)).status, 200);
+    assert.deepEqual(f.calls.at(-1), {action: 'ready', input: {...body, memberId: member.id, name: member.name}});
+  }
+  const count = f.calls.length;
+  for (const extra of [{expectedHostOffer: 300}, {expectedGuestOffer: 700},
+    {expectedHostOffer: '300', expectedGuestOffer: 700}, {expectedHostOffer: 300, expectedGuestOffer: 701},
+    {expectedHostOffer: 0, expectedGuestOffer: 700}, {expectedHostOffer: 300, expectedGuestOffer: 10000000000100},
+    {expectedHostOffer: Number.MAX_SAFE_INTEGER + 1, expectedGuestOffer: 700},
+    {expectedHostOffer: 300, expectedGuestOffer: 700, winner: 'host'}]) {
+    assert.equal((await f.request('ready', {...legacy, ...extra, requestId: randomUUID()})).status, 400);
+  }
+  assert.equal((await f.request('offer', {requestId: randomUUID(), matchId, stake: 300,
+    expectedHostOffer: 300, expectedGuestOffer: 700})).status, 400, 'Offer approval fields are accepted only by ready');
+  assert.equal(f.calls.length, count, 'Malformed approval never reaches the financial RPC');
+});
+
+test('unequal funded stakes and summed prize remain exact and omit private approval fields', () => {
+  const raw = match({stake: 3000000000, escrow: 8000000000, pot: 8000000000});
+  raw.host = {...raw.host, offer: 3000000000, stake: 3000000000, privateApproval: 'private'};
+  raw.guest = {...raw.guest, offer: 5000000000, stake: 5000000000};
+  const result = publicDTO({match: raw, rooms: [raw], wallet: {...wallet, escrow: 5000000000}});
+  for (const value of [result.match, result.rooms[0]]) {
+    assert.equal(value.host.stake, 3000000000);
+    assert.equal(value.guest.stake, 5000000000);
+    assert.equal(value.pot, 8000000000);
+    assert.equal(value.escrow, 8000000000);
+  }
+  assert.equal(result.wallet.escrow, 5000000000);
+  assert.equal(JSON.stringify(result).includes('private'), false);
+});
+
 test('one active flick is simulated on the server and resolution secrets are withheld', async t => {
   const calls = [];
   const initial = physics.initialState();

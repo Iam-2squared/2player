@@ -623,6 +623,101 @@ async function actualScenarios(browser) {
     }
     eq((await Promise.all([money(A), money(B)])).map(value => value.balance), baseline.slice(0, 2).map(value => value.balance), 'Temporary authorized funding is removed before later checks');
   });
+  await scenario('Actual unequal-stake approvals bind both offers and refund each player only their own stake', async () => {
+    await clearParticipants(contexts);
+    const before = await Promise.all([money(A), money(B)]), errors = [];
+    const context = await browser.newContext({viewport: {width: 390, height: 844}}), page = await context.newPage();
+    page.on('pageerror', error => errors.push(error.message));
+    const approve = match => ({matchId: match.id, ready: true,
+      expectedHostOffer: match.host.offer, expectedGuestOffer: match.guest.offer});
+    const commands = [];
+    page.on('request', req => { if (req.method() === 'POST' && new URL(req.url()).pathname === '/api/ready') commands.push(req.postDataJSON()); });
+    let current;
+    try {
+      await pulse(A); await pulse(B);
+      const issued = await challenge(A, players[1], 300);
+      current = (await api(B, paths.accept, mutation({invitationId: issued.lobby.outgoing[0].id, stake: 700}))).match;
+      const ownRole = current.host.memberId === players[0].id ? 'host' : 'guest';
+      eq(current.pot, 1000, 'The proposed prize sums the two different offers');
+      eq(current.host.stake, null); eq(current.guest.stake, null);
+      const unconfirmed = await api(A, '/api/ready', mutation({matchId: current.id, ready: true}), 409);
+      eq(unconfirmed.error.code, 'STAKE_CONFIRMATION_REQUIRED');
+      eq(await Promise.all([money(A), money(B)]), before, 'Missing approval never reserves either amount');
+
+      const originalApproval = mutation(approve(current));
+      const first = await api(A, '/api/ready', originalApproval);
+      eq(first.match.status, 'waiting'); eq(first.match[ownRole].ready, true);
+      eq(await Promise.all([money(A), money(B)]), before, 'The first approval does not charge either participant');
+      const changed = await api(B, '/api/offer', mutation({matchId: current.id, stake: 900}));
+      eq([changed.match.host.ready, changed.match.guest.ready], [false, false], 'An amount change revokes both prior approvals');
+      const stale = await api(A, '/api/ready', mutation(approve(current)), 409);
+      eq(stale.error.code, 'STAKE_CHANGED', 'An unseen opponent amount cannot be approved by an old snapshot');
+      const priorReplay = await api(A, '/api/ready', originalApproval);
+      eq([priorReplay.match.host.ready, priorReplay.match.guest.ready], [false, false], 'Retrying the old approval ID never approves the changed offers');
+
+      current = (await api(B, '/api/offer', mutation({matchId: current.id, stake: 700}))).match;
+      const otherApproval = mutation(approve(current));
+      const waiting = await api(B, '/api/ready', otherApproval);
+      eq(waiting.match.status, 'waiting'); eq(waiting.match[ownRole].ready, false);
+      const sameAmountsReplay = await api(A, '/api/ready', originalApproval);
+      eq(sameAmountsReplay.match.status, 'waiting'); eq(sameAmountsReplay.match[ownRole].ready, false,
+        'Even after the amounts return, the retired approval request cannot renew consent');
+      eq(await Promise.all([money(A), money(B)]), before);
+
+      await page.goto(appBase); await visible(page, '#login-view');
+      await page.selectOption('#attendance', String(players[0].attendanceNumber)); await page.fill('#pin', players[0].pin);
+      const loggedIn = page.waitForResponse(response => new URL(response.url()).pathname === '/api/login');
+      await page.click('#login-submit'); eq((await loggedIn).status(), 200);
+      await visible(page, '#room-view');
+      eq(await page.locator('#room-pot').textContent(), '1,000');
+      ok((await page.locator('#ready-button').textContent()).includes('許可'), 'Unequal stakes expose an explicit approval button');
+      ok(await page.locator('#ready-button').isEnabled(), 'Matching the opponent amount is not required');
+      const approved = page.waitForResponse(response => new URL(response.url()).pathname === '/api/ready');
+      await page.click('#ready-button'); const response = await approved; eq(response.status(), 200);
+      const funded = await response.json(); current = funded.match;
+      eq(commands.length, 1); eq(commands[0].expectedHostOffer, waiting.match.host.offer);
+      eq(commands[0].expectedGuestOffer, waiting.match.guest.offer);
+      eq(current.status, 'playing'); eq(current.pot, 1000); eq(current.escrow, 1000);
+      eq(current.host.stake, current.host.offer); eq(current.guest.stake, current.guest.offer);
+      const reserved = await Promise.all([money(A), money(B)]);
+      eq(reserved.map(value => value.balance), [before[0].balance - 300, before[1].balance - 700]);
+      eq(reserved.map(value => value.escrow), [300, 700], 'Each wallet reports only its own reserved amount');
+      const reserves = (await db.query("SELECT member_id,delta::text AS delta FROM target_private.two_player_wallet_events WHERE match_id=$1 AND phase='reserve'", [current.id])).rows;
+      eq(Object.fromEntries(reserves.map(row => [row.member_id, row.delta])), {[players[0].id]: '-300', [players[1].id]: '-700'});
+      await api(A, '/api/ready', commands[0]); await api(B, '/api/ready', otherApproval);
+      eq(await Promise.all([money(A), money(B)]), reserved, 'Approval replays never debit an unequal stake twice');
+      await visible(page, '#game-view'); eq(await page.locator('#game-pot').textContent(), '1,000');
+      eq(await page.locator('#escrow-amount').textContent(), '300', 'The real browser shows its own funded stake');
+      const cancelA = mutation({matchId: current.id}), cancelB = mutation({matchId: current.id});
+      await api(A, '/api/cancel', cancelA); eq((await api(B, '/api/cancel', cancelB)).match.status, 'cancelled');
+      const refunded = await Promise.all([money(A), money(B)]);
+      eq(refunded.map(value => value.balance), before.map(value => value.balance));
+      await api(A, '/api/cancel', cancelA); await api(B, '/api/cancel', cancelB);
+      eq(await Promise.all([money(A), money(B)]), refunded, 'Repeated cancellation does not refund either stake twice');
+      const refunds = (await db.query("SELECT member_id,delta::text AS delta FROM target_private.two_player_wallet_events WHERE match_id=$1 AND phase='settle'", [current.id])).rows;
+      eq(Object.fromEntries(refunds.map(row => [row.member_id, row.delta])), {[players[0].id]: '300', [players[1].id]: '700'});
+      await page.waitForFunction(() => document.getElementById('result-amount').textContent === '300 轟返却');
+
+      // The same asymmetric refund applies to server-side abandonment, with roles reversed.
+      const second = await challenge(A, players[1], 700);
+      current = (await api(B, paths.accept, mutation({invitationId: second.lobby.outgoing[0].id, stake: 300}))).match;
+      await api(A, '/api/ready', mutation(approve(current)));
+      current = (await api(B, '/api/ready', mutation(approve(current)))).match;
+      eq(current.escrow, 1000);
+      await db.query("UPDATE target_private.two_player_matches SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", [current.id]);
+      const expired = await api(A, '/api/match?matchId=' + current.id);
+      eq(expired.match.status, 'cancelled'); eq(expired.match.reason, 'idle_timeout');
+      eq((await Promise.all([money(A), money(B)])).map(value => value.balance), before.map(value => value.balance));
+      const expiryRefunds = (await db.query("SELECT member_id,delta::text AS delta FROM target_private.two_player_wallet_events WHERE match_id=$1 AND phase='settle'", [current.id])).rows;
+      eq(Object.fromEntries(expiryRefunds.map(row => [row.member_id, row.delta])), {[players[0].id]: '700', [players[1].id]: '300'});
+      await api(B, '/api/match?matchId=' + current.id);
+      eq((await db.query("SELECT count(*)::int AS n,sum(delta)::text AS net FROM target_private.two_player_wallet_events WHERE match_id=$1", [current.id])).rows[0], {n: 4, net: '0'});
+      eq(errors, [], 'The actual unequal-stake browser has no uncaught errors');
+    } finally {
+      await context.close();
+      if (current) {await cancelMatch(A, current); await cancelMatch(B, current);}
+    }
+  });
   await scenario('Lobby allocation is private and permanent wallet projections still reconcile', async () => {
     const tables = (await db.query("SELECT c.relname,c.relrowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='target_private' AND c.relkind='r' AND c.relname LIKE 'two_player_lobby_%'")).rows;
     ok(tables.length >= 3, 'The real lobby schema is present');

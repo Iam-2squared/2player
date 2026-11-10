@@ -5,9 +5,11 @@ KGS11th accounts and shared 轟, with two-player flick soccer.
 Each team has eight pieces and chooses one of three opening formations. Players
 take turns pulling one of their pieces back and releasing it in the opposite
 direction; pull distance sets power. The server resolves each shot and its
-collisions before the turn changes. Both players agree to the same
-stake before a match starts; confirmed results settle once through the shared
-wallet ledger.
+collisions before the turn changes. Both players approve the displayed stake
+amounts before a match starts; the two amounts can differ. A change clears both
+approvals. Confirmed results settle once through the shared wallet ledger: the
+winner receives both stakes, while a draw or cancellation returns each player's
+own stake.
 
 Stakes start at 100轟 in 100轟 increments, with no separate game limit.
 Both players must have enough available funds and settlement headroom within

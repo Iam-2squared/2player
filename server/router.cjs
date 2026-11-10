@@ -8,6 +8,7 @@ const store = require('./store.cjs');
 const {requestFailure} = require('./diagnostics.cjs');
 const {requestConfig} = require('./deadline.cjs');
 const MAX_ROUND = 2147483647; // PostgreSQL integer storage limit, not a game-ending turn cap.
+const MAX_WALLET_AMOUNT = 10000000000000; // Shared wallet representation; no separate game stake cap.
 
 function invalid() { return new HttpError(400, '送信内容を確認してください。', 'INVALID_INPUT'); }
 function exact(body, keys) {
@@ -15,7 +16,7 @@ function exact(body, keys) {
 }
 function integer(value, min, max) { return Number.isSafeInteger(value) && value >= min && value <= max; }
 function uuid(value) { return typeof value === 'string' && identity.UUID.test(value); }
-function stake(value) { return integer(value, 100, 100000) && value % 100 === 0; }
+function stake(value) { return integer(value, 100, MAX_WALLET_AMOUNT) && value % 100 === 0; }
 function code(value) { return typeof value === 'string' && /^[A-Z0-9]{6,10}$/.test(value); }
 function mutationInput(action, body) {
   const fields = {create: ['stake'], join: ['code'], offer: ['matchId', 'stake'], ready: ['matchId', 'ready'],

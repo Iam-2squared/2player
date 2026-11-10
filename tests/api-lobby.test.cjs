@@ -100,7 +100,7 @@ test('challenge and queue inputs bind actor, bound preferences and reject self o
     assert.equal((await f.request('challenge', {...valid, ...extra})).status, 400);
   }
   for (const value of [member.id, member.id.toUpperCase(), 'missing']) assert.equal((await f.request('challenge', {...valid, targetId: value})).status, 400);
-  for (const stake of [0, 101, 100001, '100']) assert.equal((await f.request('queue', {requestId: crypto.randomUUID(), stake, formation: 0})).status, 400);
+  for (const stake of [0, 99, 101, 100001, 10000000000100, Number.MAX_SAFE_INTEGER + 1, '100']) assert.equal((await f.request('queue', {requestId: crypto.randomUUID(), stake, formation: 0})).status, 400);
   for (const formation of [-1, 3, 1.5, '1']) assert.equal((await f.request('queue', {requestId: crypto.randomUUID(), stake: 100, formation})).status, 400);
   assert.equal(f.calls.length, 0);
   assert.equal((await f.request('challenge', valid)).status, 200);
@@ -138,6 +138,43 @@ test('stake-only lobby clients receive the same strict actor and compatible SQL 
     assert.equal(call.input.requestId, body.requestId);
     assert.equal(call.input.memberId, member.id);
     assert.equal((await f.request(route, {...body, memberId: other.memberId})).status, 400);
+  }
+});
+
+test('challenge, acceptance and queue preserve stakes above the former cap and integer range', async t => {
+  const f = await fixture(t);
+  for (const stake of [100100, 1000000, 3000000000, 10000000000000]) {
+    for (const [route, action, extra] of [['queue', 'queue', {}], ['challenge', 'challenge', {targetId: other.memberId}],
+      ['challenge/accept', 'accept', {invitationId}]]) {
+      const body = {requestId: crypto.randomUUID(), stake, ...extra};
+      assert.equal((await f.request(route, body)).status, 200, `${action} accepts ${stake}`);
+      const call = f.calls.at(-1);
+      assert.equal(call.action, action);
+      assert.equal(call.input.stake, stake);
+      assert.equal(call.input.formation, 0);
+      assert.equal(call.input.memberId, member.id);
+      assert.equal(call.input.requestId, body.requestId);
+    }
+  }
+});
+
+test('large queue and incoming or outgoing invitation amounts survive strict lobby DTO validation', () => {
+  for (const stake of [100100, 3000000000, 10000000000000]) {
+    const queue = {joinedAt: now, position: 1, stake, formation: 0};
+    const invitation = {id: invitationId, stake, formation: 0, createdAt: now, expiresAt: now};
+    const raw = snapshot({lobby: {online: [], queue, incoming: [{...invitation, from: other}], outgoing: [{...invitation, to: other}]}});
+    const output = lobbyDTO(raw, member.id);
+    assert.equal(output.lobby.queue.stake, stake);
+    assert.equal(output.lobby.incoming[0].stake, stake);
+    assert.equal(output.lobby.outgoing[0].stake, stake);
+  }
+  for (const stake of [10000000000100, Number.MAX_SAFE_INTEGER + 1, 3000000001, '3000000000']) {
+    for (const direction of ['queue', 'incoming', 'outgoing']) {
+      const lobby = {online: [], queue: null, incoming: [], outgoing: []};
+      if (direction === 'queue') lobby.queue = {joinedAt: now, position: 1, stake, formation: 0};
+      else lobby[direction] = [{id: invitationId, [direction === 'incoming' ? 'from' : 'to']: other, stake, formation: 0, createdAt: now, expiresAt: now}];
+      assert.throws(() => lobbyDTO(snapshot({lobby}), member.id), error => error.code === 'INVALID_LOBBY_STATE');
+    }
   }
 });
 

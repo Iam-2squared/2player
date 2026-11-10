@@ -9,6 +9,10 @@ collisions before the turn changes. Both players agree to the same
 stake before a match starts; confirmed results settle once through the shared
 wallet ledger.
 
+Stakes start at 100轟 in 100轟 increments, with no separate game limit.
+Both players must have enough available funds and settlement headroom within
+the shared wallet's existing 10,000,000,000,000轟 representation limit.
+
 After login, choose an online opponent or press ランダム to join the waiting
 queue. Direct challenges require the recipient's acceptance; random opponents
 pair in waiting order. Both paths keep the pregame stake and formation choices

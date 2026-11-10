@@ -32,6 +32,14 @@ MATCHMAKING_BROWSER_ONLY=1 WEBKIT_PATH=/path/to/webkit-wrapper node tests/e2e-ma
 
 The separate browser UI scenarios load the actual app assets but fulfill **every API request locally**. They check the online list and busy state, direct challenge/accept/decline/cancel, removed formation controls and stake-only command payloads, FIFO waiting/cancellation, accepted queue stake restored on a fresh device, delayed snapshots after queue cancellation/account switching, removal of room-code controls, eight-piece slingshot input, refresh, and narrow/desktop layouts. Chromium and WebKit are used; these are engine tests, not physical iPhone tests. The actual browser/API/SQL recovery and shared-formation scenarios run in the API/database suite above.
 
+The stake-cap update additionally checks values above 100,000轟, including
+3,000,000,000轟 preferences, challenges, waiting choices and room offers, a
+5,000,000,000轟 invitation, and a 6,000,000,000轟 pot. Both inputs omit the former
+HTML maximum. Request and lobby-response validation accepts 100轟 increments
+through the shared wallet representation limit and rejects malformed or unsafe
+values. The updated unit suite passed 75 tests; Chromium and WebKit passed 97
+browser assertions. These checks use synthetic identities and local fixtures.
+
 `APP_ORIGIN=https://…` selects deployed assets while keeping all API requests locally fulfilled:
 
 ```sh

@@ -5,6 +5,8 @@
   const INITIAL_TEAM = [[320,846],[140,790],[320,790],[500,790],[140,670],[320,670],[500,670],[320,560]];
   const INITIAL = { players: [...INITIAL_TEAM.map(([x,y]) => ({x,y})), ...INITIAL_TEAM.map(([x,y]) => ({x:640-x,y:960-y}))], ball: {x:320,y:480} };
   const MAX_PULL = 180;
+  const MAX_WALLET_AMOUNT = 10000000000000;
+  const validStake = value => Number.isSafeInteger(value) && value >= 100 && value <= MAX_WALLET_AMOUNT && value % 100 === 0;
   const COLORS = ['#f04d50', '#08b2d4'];
   const VIEWS = ['boot', 'login', 'lobby', 'room', 'game'];
   const fmt = value => new Intl.NumberFormat('ja-JP').format(Number(value) || 0);
@@ -128,7 +130,7 @@
     S.pending = saved && typeof saved.path === 'string' && saved.body?.requestId ? saved : null;
     const preferences = user ? readStorage(accountKey('preferences')) : null;
     S.preferences = {
-      stake: Number.isInteger(preferences?.stake) && preferences.stake >= 100 && preferences.stake <= 100000 && preferences.stake % 100 === 0 ? preferences.stake : 100,
+      stake: validStake(preferences?.stake) ? preferences.stake : 100,
     };
     $('lobby-stake').value = S.preferences.stake;
     $('pin').value = '';
@@ -457,7 +459,7 @@
   function preferences() {
     if (!$('lobby-stake').reportValidity()) return null;
     const stake = Number($('lobby-stake').value);
-    if (!Number.isInteger(stake) || stake < 100 || stake > 100000 || stake % 100 !== 0) return null;
+    if (!validStake(stake)) return null;
     S.preferences.stake = stake;
     writeStorage(accountKey('preferences'), S.preferences);
     return { stake };
@@ -478,8 +480,7 @@
   function renderLobby(blocked) {
     const queued = !!S.lobby.queue;
     const fixedChoice = S.lobby.queue || S.lobby.outgoing[0];
-    if (fixedChoice && Number.isInteger(fixedChoice.stake) && fixedChoice.stake >= 100 && fixedChoice.stake <= 100000 &&
-        fixedChoice.stake % 100 === 0) {
+    if (fixedChoice && validStake(fixedChoice.stake)) {
       const changed = S.preferences.stake !== fixedChoice.stake;
       S.preferences = { stake: fixedChoice.stake };
       $('lobby-stake').value = fixedChoice.stake;
@@ -909,7 +910,7 @@
   });
   $('lobby-stake').addEventListener('change', () => {
     const value = Number($('lobby-stake').value);
-    if (Number.isInteger(value) && value >= 100 && value <= 100000 && value % 100 === 0) {
+    if (validStake(value)) {
       S.preferences.stake = value; writeStorage(accountKey('preferences'), S.preferences);
     }
   });
@@ -975,7 +976,7 @@
   $('rematch-button').addEventListener('click', () => {
     if (!S.match || S.busy || S.pending || !isEnded(S.match)) return;
     const value = Number(S.match.stake);
-    if (Number.isInteger(value) && value >= 100 && value <= 100000 && value % 100 === 0) {
+    if (validStake(value)) {
       S.preferences.stake = value; $('lobby-stake').value = value; writeStorage(accountKey('preferences'), S.preferences);
     }
     void enterLobby();

@@ -574,7 +574,7 @@ function matchmakingFixture() {
   const P = require(path.join(root, 'public/physics.js'));
   let user = null, match = null, pendingQueue = null, incoming = [], outgoing = [], held = null;
   const calls = [];
-  const wallet = { balance: 10000, totalIncome: 10000, spent: 0, walletRevision: 1, gameNet: 0, escrow: 0 };
+  const wallet = { balance: 6000000000, totalIncome: 6000000000, spent: 0, walletRevision: 1, gameNet: 0, escrow: 0 };
   const makeMatch = (guest = false, stake = 100) => ({
     id: uuid(), status: 'waiting', mode: 'alternating', version: 2, turn: guest ? 'guest' : 'host', round: 1, stake: null, escrow: 0,
     host: { ...playerDTO(guest ? players[1] : players[0]), offer: stake, formation: 1, ready: guest, inputLocked: false },
@@ -589,7 +589,7 @@ function matchmakingFixture() {
     lobby: { online: user ? players.filter(item => item.id !== user.id).map((item, index) => ({ ...playerDTO(item), busy: index === 1 })) : [], queue: pendingQueue && structuredClone(pendingQueue), incoming: structuredClone(incoming), outgoing: structuredClone(outgoing) }, match: match && {...structuredClone(match), serverNow: new Date().toISOString()} });
   return {
     get calls() { return calls; }, get match() { return match; },
-    addInvitation() { const item = { id: uuid(), from: playerDTO(players[1]), stake: 400, formation: 2, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString() }; incoming.push(item); return item.id; },
+    addInvitation(stake = 400) { const item = { id: uuid(), from: playerDTO(players[1]), stake, formation: 2, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString() }; incoming.push(item); return item.id; },
     pair() { const queued = pendingQueue; pendingQueue = null; match = makeMatch(false, queued?.stake || 100); },
     delayLobby() { held = {}; held.promise = new Promise(resolve => { held.release = resolve; }); held.entered = new Promise(resolve => { held.enter = resolve; }); return held; },
     async handle(route) {
@@ -663,23 +663,34 @@ async function browserScenarios(origin) {
         eq(await page.locator('[data-challenge-user]').count(), players.length - 1);
         ok(await page.locator('[data-challenge-user="' + players[2].id + '"]').isDisabled(), 'Busy users cannot be directly selected');
         eq(await page.locator('[id*="formation"]').count(), 0, 'Formation controls are absent');
-        await page.fill('#lobby-stake', '700');
+        for (const selector of ['#lobby-stake', '#stake']) eq(await page.locator(selector).getAttribute('max'), null, 'No fixed stake maximum on ' + selector);
+        await page.fill('#lobby-stake', '3000000000'); await page.locator('#lobby-stake').press('Tab');
+        await page.reload({waitUntil: 'networkidle'}); await visible(page, '#lobby-view');
+        eq(await page.inputValue('#lobby-stake'), '3000000000', 'A large saved preference survives reload');
         await page.click('[data-challenge-user="' + players[1].id + '"]');
         const challengeCall = fixture.calls.find(item => item.path === paths.challenge);
-        eq(challengeCall.input.targetId, players[1].id); eq(challengeCall.input.stake, 700);
+        eq(challengeCall.input.targetId, players[1].id); eq(challengeCall.input.stake, 3000000000);
         eq(Object.keys(challengeCall.input).sort(), ['requestId', 'stake', 'targetId'], 'A challenge carries no formation preference');
         ok(await page.locator('#lobby-view').isVisible(), 'Sending a challenge does not start a game without acceptance');
         await visible(page, '[data-cancel-invitation]'); await page.locator('[data-cancel-invitation]').click();
         await page.waitForFunction(() => !document.querySelector('[data-cancel-invitation]'));
-        let invitationId = fixture.addInvitation(); await page.click('#refresh-lobby');
+        let invitationId = fixture.addInvitation(5000000000); await page.click('#refresh-lobby');
         await visible(page, '[data-decline-invitation="' + invitationId + '"]'); await page.click('[data-decline-invitation="' + invitationId + '"]');
         await page.waitForFunction(() => !document.querySelector('[data-decline-invitation]'));
-        invitationId = fixture.addInvitation(); await page.click('#refresh-lobby');
-        await visible(page, '[data-accept-invitation="' + invitationId + '"]'); await page.click('[data-accept-invitation="' + invitationId + '"]');
+        invitationId = fixture.addInvitation(5000000000); await page.click('#refresh-lobby');
+        await visible(page, '[data-accept-invitation="' + invitationId + '"]');
+        eq(await page.locator('[data-invitation="' + invitationId + '"] .invitation-summary span').textContent(), '5,000,000,000 轟', 'Large incoming invitation is shown exactly');
+        await page.click('[data-accept-invitation="' + invitationId + '"]');
         await visible(page, '#room-view');
         const acceptCall = fixture.calls.find(item => item.path === paths.accept);
-        eq(acceptCall.input.stake, 700);
+        eq(acceptCall.input.stake, 3000000000);
         eq(Object.keys(acceptCall.input).sort(), ['invitationId', 'requestId', 'stake'], 'Accept carries no formation preference');
+        eq(await page.inputValue('#stake'), '3000000000', 'Large accepted offer reaches the room');
+        await page.click('#offer-submit');
+        await page.waitForFunction(() => document.getElementById('offer-submit').disabled === false);
+        const offerCall = fixture.calls.find(item => item.path === '/api/offer');
+        eq(offerCall.input.stake, 3000000000, 'Large room offer is submitted exactly');
+        eq(await page.locator('#room-pot').textContent(), '6,000,000,000', 'Doubled room prize remains exact');
         eq(await page.locator('[id*="formation"]').count(), 0, 'The matched room has no manual formation picker');
         sharedFormation(fixture.match);
         await page.click('#leave-room'); await visible(page, '#lobby-view');
@@ -691,7 +702,7 @@ async function browserScenarios(origin) {
           await otherDevice.route('**/*',route=>{const url=new URL(route.request().url());if(url.origin===parsedOrigin&&url.pathname.startsWith('/api/'))return fixture.handle(route);return url.origin===parsedOrigin?route.continue():route.abort();});
           const restored=await otherDevice.newPage();restored.on('pageerror',error=>browserErrors.push({browser:name,message:error.message}));
           await restored.goto(origin,{waitUntil:'networkidle'});await visible(restored,'#queue-wait');
-          eq(await restored.inputValue('#lobby-stake'),'700','A fresh local preference cache displays the server accepted queue amount');
+          eq(await restored.inputValue('#lobby-stake'),'3000000000','A fresh local preference cache displays the large server accepted queue amount');
           eq(await restored.locator('[id*="formation"]').count(),0,'A fresh device has no formation controls');
           ok(await restored.locator('#lobby-stake').isDisabled(),'Queued choices remain locked to the accepted server settings');
         } finally {await otherDevice.close();}
@@ -704,6 +715,7 @@ async function browserScenarios(origin) {
         await page.click('#random-button'); await visible(page, '#queue-wait'); fixture.pair(); await page.click('#refresh-lobby');
         await visible(page, '#room-view');
         await page.click('#ready-button'); await visible(page, '#game-view');
+        eq(await page.locator('#game-pot').textContent(), '6,000,000,000', 'The funded large prize reaches the game');
         await page.waitForFunction(() => !document.getElementById('lock-input').disabled);
         ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Mobile game has no horizontal overflow');
         const own = fixture.match.state.players[4], canvas = page.locator('#pitch'); await canvas.scrollIntoViewIfNeeded();

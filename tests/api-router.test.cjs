@@ -106,12 +106,38 @@ test('formation choices are authenticated, bounded and bind the acting member', 
 
 test('stake and request identifiers are validated while authenticated actors are bound', async t => {
   const f = await fixture(t);
-  for (const stake of [0, 101, 100001, '100']) assert.equal((await f.request('rooms', {requestId: randomUUID(), stake})).status, 400);
+  for (const stake of [0, 99, 101, 100001, 10000000000100, Number.MAX_SAFE_INTEGER + 1, '100']) assert.equal((await f.request('rooms', {requestId: randomUUID(), stake})).status, 400);
   assert.equal((await f.request('rooms', {requestId: 'same', stake: 100})).status, 400);
   const id = randomUUID();
   const response = await f.request('rooms', {requestId: id, stake: 100});
   assert.equal(response.status, 200);
   assert.deepEqual(f.calls[0], {action: 'create', input: {requestId: id, stake: 100, memberId: member.id, name: member.name}});
+});
+
+test('create and offer pass large exact stakes to the authoritative wallet checks', async t => {
+  const f = await fixture(t);
+  for (const stake of [100100, 1000000, 3000000000, 10000000000000]) {
+    for (const [route, action, extra] of [['rooms', 'create', {}], ['offer', 'offer', {matchId}]]) {
+      const body = {requestId: randomUUID(), stake, ...extra};
+      const response = await f.request(route, body);
+      assert.equal(response.status, 200, `${action} accepts ${stake}`);
+      assert.deepEqual(f.calls.at(-1), {action, input: {...body, memberId: member.id, name: member.name}});
+    }
+  }
+});
+
+test('large funded stake, doubled pot and wallet amounts retain exact numeric DTO values', () => {
+  const stake = 3000000000;
+  const raw = match({stake, escrow: stake * 2});
+  raw.host.offer = raw.guest.offer = stake;
+  const result = publicDTO({match: raw, wallet: {...wallet, balance: 10000000000000, escrow: stake}});
+  assert.equal(result.match.stake, stake);
+  assert.equal(result.match.escrow, 6000000000);
+  assert.equal(result.match.host.offer, stake);
+  assert.equal(result.match.guest.offer, stake);
+  assert.equal(result.wallet.balance, 10000000000000);
+  assert.equal(result.wallet.escrow, stake);
+  assert.equal(Number.isSafeInteger(result.match.escrow), true);
 });
 
 test('one active flick is simulated on the server and resolution secrets are withheld', async t => {

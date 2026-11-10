@@ -507,7 +507,7 @@ async function actualScenarios(browser) {
       request(B, paths.accept, mutation({ invitationId, ...choices(200) }), null),
       request(A, paths.queue, mutation(choices(400)), null),
     ]);
-    ok(race.every(result => [200, 409].includes(result.status)), 'The match race returns either the unique match or a conflict');
+    ok(race.every(result => [200, 409].includes(result.status)), 'The match race returns either the unique match or a conflict: ' + JSON.stringify(race.map(result => ({status: result.status, code: result.value.error?.code}))));
     const active = await Promise.all([lobby(A), lobby(B), lobby(C)]);
     const ids = new Set(active.map(value => sessionMatch(value)?.id).filter(Boolean));
     eq(ids.size, 1, 'The shared player is attached to exactly one active match');
@@ -551,6 +551,77 @@ async function actualScenarios(browser) {
     const later = await queue(F); eq(sessionMatch(later), null, 'Expired queued players are skipped');
     await api(F, paths.unqueue, mutation({})); await pulse(E);
     for (let index = 0; index < contexts.length; index++) eq((await money(contexts[index])).balance, baseline[index].balance);
+  });
+  await scenario('Actual browser and API fund a three-billion stake once and refund its six-billion escrow exactly', async () => {
+    await clearParticipants(contexts);
+    const actors = players.slice(0, 2), stake = 3000000000;
+    const originals = (await db.query('SELECT member_id,name,total_points,spent_points FROM target_private.profiles WHERE member_id=ANY($1::uuid[]) ORDER BY member_id', [actors.map(player => player.id)])).rows;
+    const adjust = async (reason, targets) => db.query('SELECT target_private.adjust_wallet_income($1,$2::jsonb)', [
+      'income_adjust_local_high_stake_' + uuid(), JSON.stringify({version: 1, reason, targets}),
+    ]);
+    await adjust('Disposable local high-stake API fixture funding', originals.map(row => ({memberId: row.member_id, expectedName: row.name, totalIncome: Number(row.spent_points) + 6000000000})));
+    const context = await browser.newContext({viewport: {width: 390, height: 844}}), page = await context.newPage(), errors = [];
+    let fundedMatch;
+    page.on('pageerror', error => errors.push(error.message));
+    const clickReply = async (selector, pathname) => {
+      const response = page.waitForResponse(value => new URL(value.url()).pathname === pathname);
+      await page.click(selector);
+      const reply = await response; eq(reply.status(), 200, 'Actual high-stake browser command: ' + pathname);
+      return reply.json();
+    };
+    try {
+      await pulse(B);
+      eq((await money(A)).balance, 6000000000); eq((await money(B)).balance, 6000000000);
+      await page.goto(appBase); await visible(page, '#login-view');
+      await page.selectOption('#attendance', String(players[0].attendanceNumber)); await page.fill('#pin', players[0].pin);
+      await clickReply('#login-submit', '/api/login');
+      await visible(page, '[data-challenge-user="' + players[1].id + '"]');
+      await page.fill('#lobby-stake', String(stake));
+      const sent = await clickReply('[data-challenge-user="' + players[1].id + '"]', paths.challenge);
+      const invitation = sent.lobby.outgoing.find(item => item.to.memberId === players[1].id);
+      eq(invitation.stake, stake, 'The actual SQL invitation preserves more than int32');
+      const acceptBody = mutation({invitationId: invitation.id, stake: stake + 100});
+      const accepted = await api(B, paths.accept, acceptBody);
+      fundedMatch = accepted.match;
+      eq(accepted.match.host.offer, stake); eq(accepted.match.guest.offer, stake + 100);
+      eq((await api(B, paths.accept, acceptBody)).match.id, accepted.match.id, 'Acceptance retry creates no second match');
+      const offered = await api(B, '/api/offer', mutation({matchId: accepted.match.id, stake}));
+      eq(offered.match.host.offer, stake); eq(offered.match.guest.offer, stake);
+      await visible(page, '#room-view');
+      await page.waitForFunction(value => document.getElementById('guest-offer').textContent === value, '3,000,000,000 轟');
+      eq(await page.locator('#room-pot').textContent(), '6,000,000,000');
+      await clickReply('#ready-button', '/api/ready');
+      const readyBody = mutation({matchId: accepted.match.id, ready: true});
+      const funded = await api(B, '/api/ready', readyBody);
+      fundedMatch = funded.match;
+      eq(funded.match.status, 'playing'); eq(funded.match.stake, stake); eq(funded.match.escrow, 6000000000);
+      const reserved = await Promise.all([money(A), money(B)]);
+      eq(reserved.map(value => value.balance), [stake, stake]);
+      const replays = await Promise.all(Array.from({length: 3}, () => api(B, '/api/ready', readyBody)));
+      ok(replays.every(value => value.match.id === funded.match.id && value.match.escrow === 6000000000), 'Ready retries retain the same funded escrow');
+      eq(await Promise.all([money(A), money(B)]), reserved, 'Ready retries never reserve another stake');
+      await visible(page, '#game-view');
+      eq(await page.locator('#game-pot').textContent(), '6,000,000,000', 'The real funded prize is displayed by the page');
+      const reserveRows = (await db.query("SELECT count(*)::int AS n,sum(delta)::text AS total FROM target_private.two_player_wallet_events WHERE match_id=$1 AND phase='reserve'", [funded.match.id])).rows[0];
+      eq(reserveRows, {n: 2, total: '-6000000000'}, 'Exactly two bigint reserves are permanent');
+      const cancelA = mutation({matchId: funded.match.id}), cancelB = mutation({matchId: funded.match.id});
+      await api(A, '/api/cancel', cancelA);
+      const ended = await api(B, '/api/cancel', cancelB);
+      eq(ended.match.status, 'cancelled'); eq(ended.match.escrow, 0);
+      const refunded = await Promise.all([money(A), money(B)]);
+      eq(refunded.map(value => value.balance), [6000000000, 6000000000]);
+      await api(A, '/api/cancel', cancelA); await api(B, '/api/cancel', cancelB);
+      eq(await Promise.all([money(A), money(B)]), refunded, 'Cancel retries never refund twice');
+      const ledger = (await db.query("SELECT count(*) FILTER(WHERE phase='reserve')::int AS reserves,count(*) FILTER(WHERE phase='settle')::int AS refunds,sum(delta)::text AS net FROM target_private.two_player_wallet_events WHERE match_id=$1", [funded.match.id])).rows[0];
+      eq(ledger, {reserves: 2, refunds: 2, net: '0'}, 'The actual API and bigint ledger conserve all six billion');
+      eq((await db.query('SELECT count(*)::int AS n FROM target_private.wallet_finance_projection(NULL) l JOIN target_private.profiles p USING(member_id) WHERE (p.total_points,p.spent_points,p.calculus_points,p.birthday_points,p.casino_net,p.calculus_forgiven_points) IS DISTINCT FROM (l.total_points,l.spent_points,l.calculus_points,l.birthday_points,l.casino_net,l.calculus_forgiven_points)')).rows[0].n, 0);
+      eq(errors, [], 'The real high-stake browser has no uncaught errors');
+    } finally {
+      await context.close();
+      if (fundedMatch) { await cancelMatch(A, fundedMatch); await cancelMatch(B, fundedMatch); }
+      await adjust('Dispose local high-stake API fixture funding', originals.map(row => ({memberId: row.member_id, expectedName: row.name, totalIncome: Number(row.total_points)})));
+    }
+    eq((await Promise.all([money(A), money(B)])).map(value => value.balance), baseline.slice(0, 2).map(value => value.balance), 'Temporary authorized funding is removed before later checks');
   });
   await scenario('Lobby allocation is private and permanent wallet projections still reconcile', async () => {
     const tables = (await db.query("SELECT c.relname,c.relrowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='target_private' AND c.relkind='r' AND c.relname LIKE 'two_player_lobby_%'")).rows;

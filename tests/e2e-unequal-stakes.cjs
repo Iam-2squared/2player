@@ -145,7 +145,7 @@ async function run(base){
       if(outcome==='win')eq(await f.page.locator('#result-copy').textContent(),`収支 ＋${opponent} 轟`,'Win profit equals the other player\'s stake');
       if(role==='guest'&&outcome==='cancel'){
         f.clearMatch();await f.page.locator('#rematch-button').click();await f.page.locator('#lobby-view').waitFor({state:'visible'});
-        eq(await f.page.locator('#lobby-stake').inputValue(),'300','Guest rematch retains the guest deposit rather than the host amount');
+        eq(await f.page.locator('#lobby-stake').count(),0,'Rematch keeps wager controls in the paired room only');
       }
     }finally{await f.close();}
   }

@@ -141,6 +141,24 @@ function lobbyDTO(result, memberId) {
     outgoing: value.outgoing.map(raw => invitation(raw, 'to'))};
   return output;
 }
+function rankingDTO(result) {
+  const invalidRanking = () => new HttpError(503, 'ランキングの内容を確認できませんでした。', 'INVALID_RANKING');
+  if (!Array.isArray(result?.ranking) || result.ranking.length > 100) throw invalidRanking();
+  const ranking = result.ranking.map((entry, index) => {
+    if (!entry || !Number.isSafeInteger(entry.rank) || entry.rank !== index + 1 ||
+        typeof entry.name !== 'string' || !entry.name.trim() || Array.from(entry.name).length > 20 ||
+        !Number.isSafeInteger(entry.wins) || entry.wins < 1 ||
+        !Number.isSafeInteger(entry.points) || entry.points < entry.wins || entry.points > entry.wins * 3 ||
+        typeof entry.isYou !== 'boolean') throw invalidRanking();
+    return {rank:entry.rank, name:entry.name, wins:entry.wins, points:entry.points, isYou:entry.isYou};
+  });
+  if (ranking.filter(entry => entry.isYou).length > 1) throw invalidRanking();
+  for (let i = 1; i < ranking.length; i++) {
+    const prior = ranking[i - 1], now = ranking[i];
+    if (now.points > prior.points || (now.points === prior.points && now.wins > prior.wins)) throw invalidRanking();
+  }
+  return {ok:true, ranking};
+}
 function resolutionId(claim) {
   const hex = crypto.createHash('sha256').update('two-player-resolution\0' + claim.claimToken).digest('hex');
   return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-4' + hex.slice(13, 16) + '-8' + hex.slice(17, 20) + '-' + hex.slice(20, 32);
@@ -154,7 +172,7 @@ function requestUrl(req) {
   if (routes.length && metadata !== undefined && routes[0] !== metadata) throw invalid();
   const route = routes[0] ?? metadata;
   if (route !== undefined) {
-    if (!/^(?:session|login|logout|rooms|rooms\/join|match|offer|ready|formation|input|cancel|lobby(?:\/(?:heartbeat|leave))?|challenge(?:\/(?:accept|decline|cancel))?|queue(?:\/cancel)?)$/.test(route)) throw invalid();
+    if (!/^(?:session|login|logout|rooms|rooms\/join|match|offer|ready|formation|input|cancel|ranking|lobby(?:\/(?:heartbeat|leave))?|challenge(?:\/(?:accept|decline|cancel))?|queue(?:\/cancel)?)$/.test(route)) throw invalid();
     const pathname = '/api/' + route;
     if (!['/api/index', '/api/index.js', pathname].includes(url.pathname)) throw invalid();
     url.pathname = pathname;
@@ -174,6 +192,7 @@ function createHandler(overrides = {}) {
   const auth = {...identity, ...overrides.identity};
   const rpc = overrides.rpc || store.rpc;
   const lobbyRpc = overrides.lobbyRpc || store.lobbyRpc;
+  const rankingRpc = overrides.rankingRpc || store.rankingRpc;
   const simulate = overrides.simulate || ((state, inputs, formations) => require('../public/physics.js').simulate(state, inputs, formations));
   async function processResult(result, member, config) {
     if (!result._processing) return result;
@@ -209,7 +228,7 @@ function createHandler(overrides = {}) {
       diagnosticContext.queryKeyCount = url.searchParams.size;
       diagnosticContext.otherQueryCount = url.searchParams.size - captures.length;
       const routes = {'/api/session': ['GET'], '/api/login': ['POST'], '/api/logout': ['POST'], '/api/rooms': ['GET', 'POST'],
-        '/api/rooms/join': ['POST'], '/api/match': ['GET'], '/api/offer': ['POST'], '/api/ready': ['POST'], '/api/formation': ['POST'], '/api/input': ['POST'], '/api/cancel': ['POST'],
+        '/api/rooms/join': ['POST'], '/api/match': ['GET'], '/api/ranking': ['GET'], '/api/offer': ['POST'], '/api/ready': ['POST'], '/api/formation': ['POST'], '/api/input': ['POST'], '/api/cancel': ['POST'],
         '/api/lobby': ['GET'], '/api/lobby/heartbeat': ['POST'], '/api/lobby/leave': ['POST'], '/api/challenge': ['POST'],
         '/api/challenge/accept': ['POST'], '/api/challenge/decline': ['POST'], '/api/challenge/cancel': ['POST'], '/api/queue': ['POST'], '/api/queue/cancel': ['POST']};
       const allowed = routes[url.pathname];
@@ -264,6 +283,10 @@ function createHandler(overrides = {}) {
         diagnosticContext.phase = 'dto';
         return sendJson(res, 200, lobbyDTO({...result, ...processed}, member.id));
       }
+      if (url.pathname === '/api/ranking') {
+        if (url.search) throw invalid();
+        return sendJson(res, 200, rankingDTO(await rankingRpc('list', actor, config)));
+      }
       if (url.pathname === '/api/session') return sendJson(res, 200, {...publicDTO(await rpc('wallet', actor, config)), user: member});
       if (url.pathname === '/api/rooms' && req.method === 'GET') return sendJson(res, 200, publicDTO(await rpc('list', actor, config)));
       if (url.pathname === '/api/match') {
@@ -286,4 +309,4 @@ function createHandler(overrides = {}) {
     }
   };
 }
-module.exports = {createHandler, mutationInput, lobbyInput, lobbyActor, publicDTO, lobbyDTO, stateDTO, requestUrl};
+module.exports = {createHandler, mutationInput, lobbyInput, lobbyActor, publicDTO, lobbyDTO, rankingDTO, stateDTO, requestUrl};

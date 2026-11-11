@@ -19,10 +19,10 @@ function unpack(result) {
 }
 async function callRpc(functionName, action, input, config, timeoutMs = 12000) {
   // The function name is selected only by the two fixed server wrappers below.
-  if (!['two_player_rpc', 'two_player_lobby_rpc'].includes(functionName)) throw unavailable();
+  if (!['two_player_rpc', 'two_player_lobby_rpc', 'two_player_ranking_rpc'].includes(functionName)) throw unavailable();
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 12000) throw unavailable();
   const started = performance.now();
-  const operation = (functionName === 'two_player_lobby_rpc' ? 'lobby.' : 'soccer.') + action;
+  const operation = (functionName === 'two_player_lobby_rpc' ? 'lobby.' : functionName === 'two_player_ranking_rpc' ? 'ranking.' : 'soccer.') + action;
   let status, upstreamCode, received = false;
   try {
     if (config.databaseUrl) {
@@ -62,5 +62,6 @@ async function rpc(action, input = {}, config = getConfig()) { return callRpc('t
 async function lobbyRpc(action, input = {}, config = getConfig(), {timeoutMs = 12000} = {}) {
   return callRpc('two_player_lobby_rpc', action, input, config, timeoutMs);
 }
+async function rankingRpc(action, input = {}, config = getConfig()) { return callRpc('two_player_ranking_rpc', action, input, config); }
 async function closeStore() { const previous = pool; pool = undefined; if (previous) await previous.end(); }
-module.exports = {rpc, lobbyRpc, unpack, closeStore};
+module.exports = {rpc, lobbyRpc, rankingRpc, unpack, closeStore};

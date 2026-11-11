@@ -15,11 +15,20 @@ Stakes start at 100轟 in 100轟 increments, with no separate game limit.
 Both players must have enough available funds and settlement headroom within
 the shared wallet's existing 10,000,000,000,000轟 representation limit.
 
-After login, choose an online opponent or press ランダム to join the waiting
-queue. Direct challenges require the recipient's acceptance; random opponents
-pair in waiting order. Both paths keep the pregame stake and formation choices
-and explicit confirmation before any funds are reserved. Room codes are not
-part of the current interface. Presence is maintained by session heartbeats.
+The lobby now shows only ランダム, the online-member list, and the points
+ranking. No stake input is shown until an opponent has been paired. The queue
+and direct invitations use a temporary 100-轟 placeholder that never reserves
+funds; both players select their own real stakes in the matched room and must
+explicitly confirm the two displayed amounts before funding. Direct challenges
+still require acceptance and random pairing still uses arrival order.
+
+The ranking counts +1 win per completed 3-goal victory. Winning 3:0 gives
++3 points, 3:1 gives +2 and 3:2 gives +1; losses, draws, and cancellations
+give zero wins/points, never penalties. Rankings use settled Target records
+rather than browser scores, with total points first and wins as the tie-breaker.
+Expired shot/replay details are pruned 24 hours after settlement; minimal
+final-score summaries and permanent wallet receipts remain intact.
+Room codes are not part of the interface. Presence is session-based.
 
 Link the Vercel project, provision the required keys listed in `.env.example`,
 then configure a gitignored `.env.local` for development. Secrets are server-only;

@@ -12,7 +12,7 @@
   const fmt = value => new Intl.NumberFormat('ja-JP').format(Number(value) || 0);
   const S = {
     user: null, wallet: null, match: null, booting: true,
-    lobby: { online: [], queue: null, incoming: [], outgoing: [] }, preferences: { stake: 100 },
+    lobby: { online: [], queue: null, incoming: [], outgoing: [] }, ranking: [], rankingLoaded: false, rankingAt: 0, rankingTask: null, rankingError: false,
     lobbyGeneration: 0, lobbyRequest: 0, lobbyApplied: 0, lobbyTask: null, heartbeat: null, heartbeatTask: null,
     busy: '', epoch: 0, abort: new AbortController(), poll: null, matchTask: null, matchSnapshot: 0,
     turnClock: null, turnTimer: null, clockStale: true, clockGeneration: 0, expiryRefreshKey: '',
@@ -133,11 +133,7 @@
     S.displayedRound = null;
     const saved = user ? readStorage(accountKey('pending')) : null;
     S.pending = saved && typeof saved.path === 'string' && saved.body?.requestId ? saved : null;
-    const preferences = user ? readStorage(accountKey('preferences')) : null;
-    S.preferences = {
-      stake: validStake(preferences?.stake) ? preferences.stake : 100,
-    };
-    $('lobby-stake').value = S.preferences.stake;
+    S.ranking = []; S.rankingLoaded = false; S.rankingAt = 0; S.rankingTask = null; S.rankingError = false;
     $('pin').value = '';
     $('login-error').hidden = true;
     markConnected();
@@ -353,6 +349,7 @@
         S.lobbyApplied = sequence;
         applyData(data);
         markConnected();
+        if (!S.match) void refreshRanking();
       } catch (error) {
         if (generation !== S.lobbyGeneration || sequence < S.lobbyApplied) return;
         handlePollError(error, epoch);
@@ -361,6 +358,30 @@
       }
     })();
     return task.promise;
+  }
+
+  async function refreshRanking(force = false) {
+    if (!S.user || document.hidden || (!force && S.rankingAt && Date.now() - S.rankingAt < 20000)) return;
+    if (S.rankingTask) return S.rankingTask;
+    const epoch = S.epoch;
+    const task = (async () => {
+      try {
+        const data = await request('ranking', { epoch });
+        if (epoch !== S.epoch) return;
+        S.ranking = Array.isArray(data.ranking) ? data.ranking : [];
+        S.rankingLoaded = true; S.rankingError = false; S.rankingAt = Date.now();
+      } catch (error) {
+        if (epoch !== S.epoch || error.name === 'AbortError') return;
+        S.rankingError = true; S.rankingAt = Date.now();
+      } finally {
+        if (epoch === S.epoch) {
+          S.rankingTask = null;
+          if (!S.match) render();
+        }
+      }
+    })();
+    S.rankingTask = task;
+    return task;
   }
 
   async function refreshMatch({ initial = false, matchId = S.match?.id } = {}) {
@@ -464,14 +485,11 @@
     scheduleTurnClock();
   }
 
-  function preferences() {
-    if (!$('lobby-stake').reportValidity()) return null;
-    const stake = Number($('lobby-stake').value);
-    if (!validStake(stake)) return null;
-    S.preferences.stake = stake;
-    writeStorage(accountKey('preferences'), S.preferences);
-    return { stake };
-  }
+  // Queueing and direct invitations carry only a refundable, uncommitted
+  // 100-轟 placeholder for backward-compatible DB matchmaking. The actual
+  // wager is chosen in the room after an opponent is found and no funds are
+  // reserved until both people confirm the displayed offers.
+  function preferences() { return { stake: 100 }; }
 
   function invitationButton(label, attribute, invitationId, path, body, disabled) {
     const button = document.createElement('button');
@@ -487,19 +505,11 @@
 
   function renderLobby(blocked) {
     const queued = !!S.lobby.queue;
-    const fixedChoice = S.lobby.queue || S.lobby.outgoing[0];
-    if (fixedChoice && validStake(fixedChoice.stake)) {
-      const changed = S.preferences.stake !== fixedChoice.stake;
-      S.preferences = { stake: fixedChoice.stake };
-      $('lobby-stake').value = fixedChoice.stake;
-      if (changed) writeStorage(accountKey('preferences'), S.preferences);
-    }
     $('random-button').disabled = blocked || queued || S.lobby.outgoing.length > 0;
     show('random-button', !queued);
     show('queue-wait', queued);
     text('queue-status', Number.isInteger(S.lobby.queue?.position) ? `待機中 · ${S.lobby.queue.position}番目` : '待機中');
     $('queue-cancel').disabled = blocked;
-    $('lobby-stake').disabled = blocked || queued || S.lobby.outgoing.length > 0;
     $('refresh-lobby').disabled = blocked;
 
     const incoming = $('incoming-challenges'), outgoing = $('outgoing-challenges');
@@ -509,7 +519,7 @@
       const card = document.createElement('article'); card.className = 'invitation-card'; card.dataset.invitation = invitation.id;
       const summary = document.createElement('div'); summary.className = 'invitation-summary';
       const name = document.createElement('strong'); name.textContent = invitation.from?.name || '';
-      const amount = document.createElement('span'); amount.textContent = `${fmt(invitation.stake)} 轟`;
+      const amount = document.createElement('span'); amount.textContent = '対戦の申込み';
       summary.append(name, amount);
       const actions = document.createElement('div'); actions.className = 'invitation-actions';
       actions.append(
@@ -554,6 +564,23 @@
       });
       list.append(button);
     }
+
+    const ranking = $('ranking-users');
+    ranking.replaceChildren();
+    for (const entry of S.ranking) {
+      const row = document.createElement('div');
+      row.className = 'ranking-row' + (entry.isYou ? ' ranking-self' : '');
+      const place = document.createElement('span'); place.className = 'ranking-place'; place.textContent = String(entry.rank);
+      const name = document.createElement('strong'); name.className = 'ranking-name'; name.textContent = entry.name;
+      const wins = document.createElement('span'); wins.className = 'ranking-wins'; wins.textContent = `${fmt(entry.wins)}勝`;
+      const points = document.createElement('span'); points.className = 'ranking-points'; points.textContent = `${fmt(entry.points)} pt`;
+      row.append(place, name, wins, points);
+      ranking.append(row);
+    }
+    text('ranking-empty', S.rankingError && !S.rankingLoaded
+      ? 'ランキングを取得できませんでした。更新ボタンで再確認できます。'
+      : S.rankingLoaded ? 'まだ勝利記録がありません' : 'ランキングを読み込み中…');
+    show('ranking-empty', S.ranking.length === 0);
   }
 
   function renderRoom(blocked) {
@@ -843,6 +870,7 @@
     stopAnimation();
     S.match = null;
     S.cancelOpen = false;
+    S.rankingAt = 0;
     saveActive(null);
     render();
     await refreshLobby();
@@ -921,12 +949,6 @@
     const selected = preferences();
     if (selected && !$('random-button').disabled) void mutate('queue', selected);
   });
-  $('lobby-stake').addEventListener('change', () => {
-    const value = Number($('lobby-stake').value);
-    if (validStake(value)) {
-      S.preferences.stake = value; writeStorage(accountKey('preferences'), S.preferences);
-    }
-  });
   $('queue-cancel').addEventListener('click', () => { void mutate('queue/cancel', {}); });
   $('offer-form').addEventListener('submit', event => { event.preventDefault(); if ($('offer-form').reportValidity() && S.match?.status === 'waiting') void mutate('offer', { matchId: S.match.id, stake: Number($('stake').value) }); });
   $('stake').addEventListener('input', () => { if (S.match?.status === 'waiting') renderRoom(!!S.busy || !!S.pending); });
@@ -937,7 +959,7 @@
     });
   });
   $('leave-room').addEventListener('click', () => { if (S.match?.status === 'waiting') void mutate('cancel', { matchId: S.match.id }); });
-  $('refresh-lobby').addEventListener('click', () => { void refreshLobby({ heartbeat: true }); });
+  $('refresh-lobby').addEventListener('click', () => { void refreshLobby({ heartbeat: true }); void refreshRanking(true); });
   $('retry-action').addEventListener('click', () => { if (S.pending) void mutate(S.pending.path, S.pending.body, { retry: true }); });
   $('aim-angle').addEventListener('input', () => { if (!canShoot()) return; S.angle = Number($('aim-angle').value); updateAimControls(); });
   $('aim-power').addEventListener('input', () => { if (!canShoot()) return; S.power = Number($('aim-power').value); updateAimControls(); });
@@ -994,10 +1016,6 @@
   $('back-lobby').addEventListener('click', () => { void enterLobby(); });
   $('rematch-button').addEventListener('click', () => {
     if (!S.match || S.busy || S.pending || !isEnded(S.match)) return;
-    const value = fundedStake(S.match, myRole());
-    if (validStake(value)) {
-      S.preferences.stake = value; $('lobby-stake').value = value; writeStorage(accountKey('preferences'), S.preferences);
-    }
     void enterLobby();
   });
   document.addEventListener('visibilitychange', () => {

@@ -519,7 +519,7 @@
       const card = document.createElement('article'); card.className = 'invitation-card'; card.dataset.invitation = invitation.id;
       const summary = document.createElement('div'); summary.className = 'invitation-summary';
       const name = document.createElement('strong'); name.textContent = invitation.from?.name || '';
-      const amount = document.createElement('span'); amount.textContent = `${fmt(invitation.stake)} 轟`;
+      const amount = document.createElement('span'); amount.textContent = '対戦の申込み';
       summary.append(name, amount);
       const actions = document.createElement('div'); actions.className = 'invitation-actions';
       actions.append(

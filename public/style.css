@@ -11,3 +11,25 @@
 .match-header{display:block;height:auto;margin:10px auto 5px;width:min(100%,calc((100svh - 204px)*2/3));max-width:480px}.turn-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:46px;padding:10px 13px;border:1px solid #d8dfd4;border-radius:9px;background:#e8ece3;color:#657064}.turn-banner[data-team=host]{background:#ffe6e6;border-color:#efb2b4;color:#9e252e}.turn-banner[data-team=guest]{background:#dff6fc;border-color:#9ddce9;color:#006883}#turn-title{display:flex;align-items:center;gap:6px;min-width:0;font-size:13px;font-weight:600}#turn-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}#turn-action{flex:none}.turn-clock{flex:none;font-size:20px;line-height:1;font-weight:750;font-variant-numeric:tabular-nums}.turn-clock.urgent{color:#a3333b}.match-meta{display:flex;align-items:center;justify-content:space-between;padding:5px 2px 0;font-size:12px}.match-meta strong{font-size:12px}.score-team{padding:5px 6px;border:1px solid transparent;border-radius:5px}.score-team.is-attacking{border-color:#ffffffc9;background:#ef4b4e42;color:#fff}.score-team.blue-team.is-attacking{background:#06afd142}.pitch-shell,.game-tools{width:min(100%,calc((100svh - 204px)*2/3))}
 @media(max-width:650px){.match-header,.pitch-shell,.game-tools{width:min(100%,calc((100svh - 198px)*2/3))}.match-header{margin-top:8px}.turn-banner{min-height:44px;padding:9px 11px}#turn-title{font-size:11px}#turn-name{font-size:12px}.turn-clock{font-size:19px}.scoreboard{padding:5px 6px;gap:5px}.score-team{padding:4px;gap:4px}}
 @media(max-height:450px) and (min-width:500px){.match-header,.pitch-shell,.game-tools{width:200px}.turn-banner{min-height:34px;padding:6px 8px}#turn-title,#turn-name{font-size:10px}.turn-clock{font-size:16px}.match-meta{padding-top:2px}.score-team{padding:2px}}
+
+/* Compact lobby: random matchmaking, online members, permanent points table. */
+.matchmaking-settings{padding:16px 21px}
+.matchmaking-settings>.button{margin-top:0;min-height:49px}
+.ranking-panel{margin:26px 0 44px}
+.ranking-panel .list-heading{align-items:flex-start;gap:8px;margin-bottom:9px;font-size:12px;font-weight:700}
+.ranking-legend{color:var(--muted);font-weight:400;font-size:9px;text-align:right;line-height:1.6;max-width:235px}
+.ranking-row{display:grid;grid-template-columns:25px minmax(0,1fr) 42px 58px;align-items:center;gap:10px;min-height:55px;padding:13px 14px;margin-top:7px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.ranking-self{border-color:#99b9cb;background:#f1f6fa}
+.ranking-place{font-size:11px;font-weight:800;color:var(--muted);text-align:center;font-variant-numeric:tabular-nums}
+.ranking-name{overflow-wrap:anywhere;font-size:12px;min-width:0}
+.ranking-wins{font-size:10px;color:var(--muted);text-align:right;white-space:nowrap}
+.ranking-points{font-size:12px;font-weight:750;text-align:right;white-space:nowrap;color:var(--navy);font-variant-numeric:tabular-nums}
+.ranking-empty{text-align:center;margin:18px auto}
+.stake-guidance{font-size:11px;color:var(--muted);line-height:1.65;margin:0 0 18px}
+@media(max-width:650px){
+ .ranking-panel{margin-top:24px}
+ .ranking-panel .list-heading{flex-wrap:wrap}
+ .ranking-legend{max-width:none;text-align:left}
+ .ranking-row{grid-template-columns:22px minmax(0,1fr) 39px 58px;gap:7px;padding:13px 11px}
+ .ranking-name{font-size:11px}
+}

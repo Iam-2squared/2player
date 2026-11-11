@@ -576,18 +576,21 @@ async function actualScenarios(browser) {
       await page.selectOption('#attendance', String(players[0].attendanceNumber)); await page.fill('#pin', players[0].pin);
       await clickReply('#login-submit', '/api/login');
       await visible(page, '[data-challenge-user="' + players[1].id + '"]');
-      await page.fill('#lobby-stake', String(stake));
+      eq(await page.locator('#lobby-stake').count(), 0, 'Wager is not shown before matching');
       const sent = await clickReply('[data-challenge-user="' + players[1].id + '"]', paths.challenge);
       const invitation = sent.lobby.outgoing.find(item => item.to.memberId === players[1].id);
-      eq(invitation.stake, stake, 'The actual SQL invitation preserves more than int32');
-      const acceptBody = mutation({invitationId: invitation.id, stake: stake + 100});
+      eq(invitation.stake, 100, 'Invitation carries only the uncommitted placeholder');
+      const acceptBody = mutation({invitationId: invitation.id, stake: 100});
       const accepted = await api(B, paths.accept, acceptBody);
       fundedMatch = accepted.match;
-      eq(accepted.match.host.offer, stake); eq(accepted.match.guest.offer, stake + 100);
+      eq(accepted.match.host.offer, 100); eq(accepted.match.guest.offer, 100);
       eq((await api(B, paths.accept, acceptBody)).match.id, accepted.match.id, 'Acceptance retry creates no second match');
       const offered = await api(B, '/api/offer', mutation({matchId: accepted.match.id, stake}));
-      eq(offered.match.host.offer, stake); eq(offered.match.guest.offer, stake);
+      eq(offered.match.host.offer, 100); eq(offered.match.guest.offer, stake);
       await visible(page, '#room-view');
+      await page.fill('#stake', String(stake));
+      const offeredHost = await clickReply('#offer-submit', '/api/offer');
+      eq(offeredHost.match.host.offer, stake, 'Host sets wager only after pairing');
       await page.waitForFunction(value => document.getElementById('guest-offer').textContent === value, '3,000,000,000 轟');
       eq(await page.locator('#room-pot').textContent(), '6,000,000,000');
       await clickReply('#ready-button', '/api/ready');
@@ -773,6 +776,9 @@ function matchmakingFixture() {
       }
       if (url.pathname === '/api/logout') { user = null; match = null; incoming = []; outgoing = []; pendingQueue = null; return send(200, { ok: true }); }
       if (url.pathname === '/api/session') return send(200, snapshot());
+       if (url.pathname === '/api/ranking') return send(200, {ok:true,ranking:[
+         {rank:1,name:user?.name||'自分',wins:2,points:5,isYou:true}
+       ]});
       if (!user) return send(401, { ok: false, error: { code: 'AUTHENTICATION_REQUIRED', message: 'ログインしてください。' } });
       if (url.pathname === paths.lobby) {
         const value = snapshot();
@@ -829,13 +835,14 @@ async function browserScenarios(origin) {
         eq(await page.locator('[data-challenge-user]').count(), players.length - 1);
         ok(await page.locator('[data-challenge-user="' + players[2].id + '"]').isDisabled(), 'Busy users cannot be directly selected');
         eq(await page.locator('[id*="formation"]').count(), 0, 'Formation controls are absent');
-        for (const selector of ['#lobby-stake', '#stake']) eq(await page.locator(selector).getAttribute('max'), null, 'No fixed stake maximum on ' + selector);
-        await page.fill('#lobby-stake', '3000000000'); await page.locator('#lobby-stake').press('Tab');
+        eq(await page.locator('#lobby-stake').count(), 0, 'Lobby has no wager input');
+        eq(await page.locator('#stake').getAttribute('max'), null, 'Room stake has no fixed maximum');
+        eq(await page.locator('#ranking-users').count(),1,'Permanent standings appear on lobby');
         await page.reload({waitUntil: 'networkidle'}); await visible(page, '#lobby-view');
-        eq(await page.inputValue('#lobby-stake'), '3000000000', 'A large saved preference survives reload');
+        eq(await page.locator('#lobby-stake').count(),0,'Wager is still hidden after reload');
         await page.click('[data-challenge-user="' + players[1].id + '"]');
         const challengeCall = fixture.calls.find(item => item.path === paths.challenge);
-        eq(challengeCall.input.targetId, players[1].id); eq(challengeCall.input.stake, 3000000000);
+        eq(challengeCall.input.targetId, players[1].id); eq(challengeCall.input.stake, 100);
         eq(Object.keys(challengeCall.input).sort(), ['requestId', 'stake', 'targetId'], 'A challenge carries no formation preference');
         ok(await page.locator('#lobby-view').isVisible(), 'Sending a challenge does not start a game without acceptance');
         await visible(page, '[data-cancel-invitation]'); await page.locator('[data-cancel-invitation]').click();
@@ -845,18 +852,18 @@ async function browserScenarios(origin) {
         await page.waitForFunction(() => !document.querySelector('[data-decline-invitation]'));
         invitationId = fixture.addInvitation(5000000000); await page.click('#refresh-lobby');
         await visible(page, '[data-accept-invitation="' + invitationId + '"]');
-        eq(await page.locator('[data-invitation="' + invitationId + '"] .invitation-summary span').textContent(), '5,000,000,000 轟', 'Large incoming invitation is shown exactly');
+        eq(await page.locator('[data-invitation="' + invitationId + '"] .invitation-summary span').textContent(), '対戦の申込み', 'Wager remains hidden on unmatched invitations');
         await page.click('[data-accept-invitation="' + invitationId + '"]');
         await visible(page, '#room-view');
         const acceptCall = fixture.calls.find(item => item.path === paths.accept);
-        eq(acceptCall.input.stake, 3000000000);
+        eq(acceptCall.input.stake, 100);
         eq(Object.keys(acceptCall.input).sort(), ['invitationId', 'requestId', 'stake'], 'Accept carries no formation preference');
-        eq(await page.inputValue('#stake'), '3000000000', 'Large accepted offer reaches the room');
+        eq(await page.inputValue('#stake'), '100', 'Matched room starts with the unfunded minimum'); await page.fill('#stake','3000000000');
         await page.click('#offer-submit');
         await page.waitForFunction(() => document.getElementById('offer-submit').disabled === false);
         const offerCall = fixture.calls.find(item => item.path === '/api/offer');
         eq(offerCall.input.stake, 3000000000, 'Large room offer is submitted exactly');
-        eq(await page.locator('#room-pot').textContent(), '6,000,000,000', 'Doubled room prize remains exact');
+        eq(await page.locator('#room-pot').textContent(), '3,000,000,100', 'Large stake is chosen in the matched room');
         eq(await page.locator('[id*="formation"]').count(), 0, 'The matched room has no manual formation picker');
         sharedFormation(fixture.match);
         await page.click('#leave-room'); await visible(page, '#lobby-view');
@@ -868,9 +875,9 @@ async function browserScenarios(origin) {
           await otherDevice.route('**/*',route=>{const url=new URL(route.request().url());if(url.origin===parsedOrigin&&url.pathname.startsWith('/api/'))return fixture.handle(route);return url.origin===parsedOrigin?route.continue():route.abort();});
           const restored=await otherDevice.newPage();restored.on('pageerror',error=>browserErrors.push({browser:name,message:error.message}));
           await restored.goto(origin,{waitUntil:'networkidle'});await visible(restored,'#queue-wait');
-          eq(await restored.inputValue('#lobby-stake'),'3000000000','A fresh local preference cache displays the large server accepted queue amount');
+          eq(await restored.locator('#lobby-stake').count(),0,'A fresh session has no pre-match wager input');
           eq(await restored.locator('[id*="formation"]').count(),0,'A fresh device has no formation controls');
-          ok(await restored.locator('#lobby-stake').isDisabled(),'Queued choices remain locked to the accepted server settings');
+          ok(await restored.locator('#random-button').isHidden(),'Queued random button cannot resubmit');
         } finally {await otherDevice.close();}
         const queueSnapshot = fixture.delayLobby(); await page.click('#refresh-lobby');
         await Promise.race([queueSnapshot.entered, delay(5000).then(() => {throw Error('Missing held queue snapshot');})]);
@@ -881,7 +888,7 @@ async function browserScenarios(origin) {
         await page.click('#random-button'); await visible(page, '#queue-wait'); fixture.pair(); await page.click('#refresh-lobby');
         await visible(page, '#room-view');
         await page.click('#ready-button'); await visible(page, '#game-view');
-        eq(await page.locator('#game-pot').textContent(), '6,000,000,000', 'The funded large prize reaches the game');
+        eq(await page.locator('#game-pot').textContent(), '200', 'Random pairing funds the confirmed default room amount');
         await page.waitForFunction(() => !document.getElementById('lock-input').disabled);
         ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Mobile game has no horizontal overflow');
         const own = fixture.match.state.players[4], canvas = page.locator('#pitch'); await canvas.scrollIntoViewIfNeeded();

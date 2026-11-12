@@ -634,6 +634,12 @@
     text('score-host-name', match.host?.name || '');
     text('score-guest-name', match.guest?.name || '');
     text('score-host', scoreOf('host')); text('score-guest', scoreOf('guest'));
+    for(const side of ['host','guest']){
+      const count=Number(match[side]?.timeoutStreak??0);
+      const label=$('score-'+side+'-timeouts');
+      label.hidden=ended||count===0;
+      label.textContent=count>0?`時間切れ ${count}/3`:'';
+    }
     text('game-pot', fmt(matchPot(match)));
     text('escrow-amount', fmt(ended ? 0 : fundedStake(match, role)));
     text('team-label', '自分');
@@ -663,7 +669,11 @@
     const opponentStake = fundedStake(match, role === 'host' ? 'guest' : 'host');
     text('result-title', cancelled ? '中止' : draw ? '引き分け' : win ? 'WIN' : 'LOSE');
     text('result-amount', cancelled || draw ? stake ? `${fmt(stake)} 轟返却` : '預かりなし' : win ? `${fmt(matchPot(match))} 轟獲得` : `−${fmt(stake)} 轟`);
-    text('result-copy', cancelled || draw ? '全額返却済み' : win ? `収支 ＋${fmt(opponentStake)} 轟` : '');
+    const timeoutLoss=match.reason==='three_timeouts';
+    text('result-copy', cancelled || draw ? '全額返却済み'
+      : timeoutLoss ? win ? `相手の3回連続時間切れで勝利 · 収支 ＋${fmt(opponentStake)} 轟`
+        : '3回連続で時間切れとなったため敗北'
+      : win ? `収支 ＋${fmt(opponentStake)} 轟` : '');
     text('result-balance', fmt(S.wallet?.balance));
     $('rematch-button').disabled = !!S.busy || !!S.pending;
   }

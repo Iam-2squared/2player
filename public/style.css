@@ -33,3 +33,12 @@
  .ranking-row{grid-template-columns:22px minmax(0,1fr) 39px 58px;gap:7px;padding:13px 11px}
  .ranking-name{font-size:11px}
 }
+/* Compact per-player server-authoritative timeout counters.
+   No extra network requests or animations; they appear only after a miss. */
+.score-timeout-streak{flex:none;white-space:nowrap;font-size:8px;font-weight:700;line-height:1.35;padding:1px 4px;border-radius:4px;background:rgba(255,255,255,.18)}
+.score-team.red-team .score-timeout-streak{color:#fff0c9}
+.score-team.blue-team .score-timeout-streak{color:#fff0c9}
+@media(max-width:650px){
+  .score-team{flex-wrap:wrap}
+  .score-timeout-streak{font-size:7px}
+}

@@ -8,7 +8,8 @@
   const MAX_WALLET_AMOUNT = 10000000000000;
   const validStake = value => Number.isSafeInteger(value) && value >= 100 && value <= MAX_WALLET_AMOUNT && value % 100 === 0;
   const COLORS = ['#f04d50', '#08b2d4'];
-  const VIEWS = ['boot', 'login', 'lobby', 'room', 'game'];
+  const VIEWS = ['boot', 'login', 'lobby', 'room', 'game', 'spectate'];
+  const STAMPS = Object.freeze(['おつw', 'うっまw', 'お願いします', 'あざした〜w', 'もう一戦しよ']);
   const fmt = value => new Intl.NumberFormat('ja-JP').format(Number(value) || 0);
   const S = {
     user: null, wallet: null, match: null, booting: true,
@@ -19,6 +20,9 @@
     pending: null, angle: 270, power: 65, piece: 0, animation: null, animationQueue: [], raf: 0,
     cancelOpen: false, offerVersion: '', noticeTimer: null, noticeKind: '',
     dragging: null, displayedRound: null, connectionLost: false,
+    social: {viewers:[],stamp:null}, socialTask:null, stampTimer:null, seenStampKey:'', lastStampSent:0,
+    liveGames:[], liveGamesAt:0, liveGamesTask:null,
+    watch:null, watchTask:null,
   };
   const clockReceipts = new WeakMap();
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -109,10 +113,14 @@
     clearTimeout(S.poll);
     clearTimeout(S.heartbeat);
     clearTimeout(S.turnTimer);
+    clearTimeout(S.stampTimer);
+    show('pitch-stamp',false);show('spectate-stamp',false);
     stopAnimation();
     S.user = user;
     S.wallet = wallet;
     S.match = null;
+    S.watch = null; S.watchTask=null; S.liveGames=[]; S.liveGamesAt=0; S.liveGamesTask=null;
+    S.social={viewers:[],stamp:null}; S.socialTask=null;S.seenStampKey='';S.lastStampSent=0;
     S.matchTask = null;
     S.matchSnapshot = 0;
     S.turnClock = null;
@@ -163,7 +171,7 @@
         outgoing: Array.isArray(data.lobby.outgoing) ? data.lobby.outgoing : [],
       };
     }
-    if (data.match) applyMatch(data.match, initial);
+    if (data.match && !S.watch) applyMatch(data.match, initial);
     render();
   }
 
@@ -242,6 +250,7 @@
     applyTurnClock(match);
     saveActive(match.id);
     if (changed) {
+      S.social={viewers:[],stamp:null}; S.seenStampKey=''; S.socialTask=null;
       S.lobbyGeneration += 1;
       stopAnimation();
       S.dragging = null;
@@ -330,7 +339,7 @@
   async function refreshLobby({ heartbeat = false } = {}) {
     const epoch = S.epoch;
     const generation = S.lobbyGeneration;
-    if (!S.user || document.hidden) return;
+    if (!S.user || document.hidden || S.watch) return;
     const active = S.lobbyTask;
     if (active && active.epoch === epoch && active.generation === generation) {
       await active.promise;
@@ -349,7 +358,7 @@
         S.lobbyApplied = sequence;
         applyData(data);
         markConnected();
-        if (!S.match) void refreshRanking();
+        if (!S.match && !S.watch){void refreshRanking();void refreshLiveGames();}
       } catch (error) {
         if (generation !== S.lobbyGeneration || sequence < S.lobbyApplied) return;
         handlePollError(error, epoch);
@@ -402,6 +411,7 @@
         if (epoch !== S.epoch || generation !== S.lobbyGeneration || (S.match && S.match.id !== matchId)) return;
         applyData(data, { initial: task.initial });
         markConnected();
+        if(S.match?.status==='playing'&&!S.watch)void refreshSocial();
       } catch (error) {
         if (epoch !== S.epoch || generation !== S.lobbyGeneration || observed !== S.matchSnapshot) return;
         if (error.status === 404 || error.status === 403) {
@@ -434,11 +444,12 @@
     if (!S.user || document.hidden) return;
     S.poll = setTimeout(async () => {
       const epoch = S.epoch;
-      if (!S.busy) {
-        if (S.match && !isEnded(S.match)) await refreshMatch();
-        else if (!S.match) await refreshLobby();
+      if(!S.busy){
+        if(S.watch)await refreshSpectate();
+        else if(S.match && !isEnded(S.match))await refreshMatch();
+        else if(!S.match)await refreshLobby();
       }
-      if (epoch === S.epoch) schedulePoll(S.match ? 1800 : 2500);
+      if(epoch===S.epoch)schedulePoll(S.watch?2000:S.match?1800:2500);
     }, delay);
   }
 
@@ -447,7 +458,7 @@
     if (!S.user || document.hidden) return;
     const epoch = S.epoch;
     S.heartbeat = setTimeout(async () => {
-      if (!S.heartbeatTask) {
+      if (!S.watch&&!S.heartbeatTask) {
         const task = refreshLobby({ heartbeat: true });
         S.heartbeatTask = task;
         await task;
@@ -467,7 +478,7 @@
 
   function render() {
     const match = S.match;
-    const active = S.booting ? 'boot' : !S.user ? 'login' : !match ? 'lobby' : match.status === 'waiting' ? 'room' : 'game';
+    const active = S.booting ? 'boot' : !S.user ? 'login' : S.watch ? 'spectate' : !match ? 'lobby' : match.status === 'waiting' ? 'room' : 'game';
     for (const view of VIEWS) show(`${view}-view`, active === view);
     show('account', !!S.user && !S.booting);
     if (S.user) {
@@ -481,6 +492,7 @@
     if (active === 'lobby') renderLobby(blocked);
     if (active === 'room') renderRoom(blocked);
     if (active === 'game') renderGame(blocked);
+    if (active === 'spectate') renderSpectate();
     drawCurrent();
     scheduleTurnClock();
   }
@@ -565,6 +577,18 @@
       list.append(button);
     }
 
+    const live=$('live-games');live.replaceChildren();
+    for(const game of S.liveGames){
+      const card=document.createElement('div');card.className='live-game-card';
+      const info=document.createElement('div');info.className='live-game-score';
+      const names=document.createElement('strong');names.textContent=`${game.host} vs ${game.guest}`;
+      const score=document.createElement('small');score.textContent=`${game.scores.host} – ${game.scores.guest} · ${fmt(game.round)}手目`;
+      info.append(names,score);
+      const button=document.createElement('button');button.type='button';button.className='button secondary small';button.textContent='観戦';button.disabled=blocked;
+      button.addEventListener('click',()=>{void beginSpectate(game.id);});
+      card.append(info,button);live.append(card);
+    }
+    show('live-games-empty',S.liveGames.length===0);
     const ranking = $('ranking-users');
     ranking.replaceChildren();
     for (const entry of S.ranking) {
@@ -634,6 +658,10 @@
     text('score-host-name', match.host?.name || '');
     text('score-guest-name', match.guest?.name || '');
     text('score-host', scoreOf('host')); text('score-guest', scoreOf('guest'));
+    const watchers=S.social.viewers;
+    text('watching-status', watchers.length ? `${watchers.slice(0,3).join('、')}${watchers.length>3?'ほか':''}が観戦中` : '');
+    show('watching-status',watchers.length>0);
+    show('stamp-control',!ended);
     for(const side of ['host','guest']){
       const count=Number(match[side]?.timeoutStreak??0);
       const label=$('score-'+side+'-timeouts');
@@ -740,6 +768,10 @@
 
   function drawCurrent() {
     if (!$('game-view').hidden) drawPitch($('pitch'), currentState(), seat(), canShoot());
+    if (!$('spectate-view').hidden && S.watch?.match) {
+      const state=S.animation ? currentState() : S.watch.match.state;
+      drawPitch($('spectate-pitch'),validState(state)?state:INITIAL,0,false);
+    }
   }
 
   function polygon(ctx, points, fill, stroke, width = 3) {
@@ -877,12 +909,16 @@
 
   async function enterLobby() {
     S.lobbyGeneration += 1;
+    const leaveMatch=S.watch?.id;
+    S.watch=null;S.watchTask=null;
     stopAnimation();
+    clearTimeout(S.stampTimer);show('spectate-stamp',false);show('pitch-stamp',false);
     S.match = null;
     S.cancelOpen = false;
     S.rankingAt = 0;
     saveActive(null);
     render();
+    if(leaveMatch)void request('watch/leave',{method:'POST',body:{matchId:leaveMatch}}).catch(()=>{});
     await refreshLobby();
     schedulePoll();
   }

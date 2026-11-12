@@ -80,7 +80,11 @@ function matchDTO(match, summary = false) {
     throw new HttpError(503, '対戦データを確認できませんでした。', 'INVALID_MATCH_STATE');
   }
   for (const seat of ['host', 'guest']) {
-    result[seat] = select(match[seat], ['memberId', 'name', 'offer', 'stake', 'formation', 'ready', 'inputLocked', 'cancelRequested']);
+    result[seat] = select(match[seat], ['memberId', 'name', 'offer', 'stake', 'formation', 'ready', 'inputLocked', 'cancelRequested', 'timeoutStreak']);
+    if (result[seat] && Object.hasOwn(result[seat], 'timeoutStreak') &&
+        !integer(result[seat].timeoutStreak, 0, 3)) {
+      throw new HttpError(503, '時間切れの記録を確認できませんでした。', 'INVALID_MATCH_STATE');
+    }
     if (result[seat] && Object.hasOwn(result[seat], 'stake') && result[seat].stake !== null && !stake(result[seat].stake)) {
       throw new HttpError(503, '対戦データを確認できませんでした。', 'INVALID_MATCH_STATE');
     }

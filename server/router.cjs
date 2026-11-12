@@ -163,6 +163,55 @@ function rankingDTO(result) {
   }
   return {ok:true, ranking};
 }
+// All stamps are fixed codes. Never allow browser-provided free text.
+function stampDTO(raw) {
+  const failed=()=>new HttpError(503,'スタンプを確認できませんでした。','INVALID_SOCIAL');
+  if(!raw || typeof raw.id!=='string' || !/^[0-9]{1,18}$/.test(raw.id) ||
+     !integer(raw.stampId,1,5) || typeof raw.fromName!=='string' ||
+     !raw.fromName.trim() || raw.fromName.length>20 ||
+     typeof raw.sentAt!=='string' || !Number.isFinite(Date.parse(raw.sentAt))) throw failed();
+  return {id:raw.id,stampId:raw.stampId,fromName:raw.fromName,sentAt:raw.sentAt};
+}
+function socialDTO(result) {
+  const raw=result?.social,failed=()=>new HttpError(503,'観戦情報を確認できませんでした。','INVALID_SOCIAL');
+  if(!raw || !Array.isArray(raw.viewers) || raw.viewers.length>20 ||
+     raw.viewers.some(name=>typeof name!=='string'||!name.trim()||name.length>20)) throw failed();
+  return {viewers:raw.viewers.slice(),stamp:raw.stamp==null?null:stampDTO(raw.stamp)};
+}
+function liveGamesDTO(result) {
+  const failed=()=>new HttpError(503,'試合一覧を確認できませんでした。','INVALID_SPECTATE');
+  if(!Array.isArray(result?.games)||result.games.length>25)throw failed();
+  const games=result.games.map(raw=>{
+    if(!raw||!uuid(raw.id)||typeof raw.host!=='string'||!raw.host.trim()||raw.host.length>20||
+       typeof raw.guest!=='string'||!raw.guest.trim()||raw.guest.length>20||
+       !integer(raw.round,1,MAX_ROUND)||!integer(raw.scores?.host,0,3)||!integer(raw.scores?.guest,0,3))throw failed();
+    return {id:raw.id,host:raw.host,guest:raw.guest,scores:{host:raw.scores.host,guest:raw.scores.guest},round:raw.round};
+  });
+  if(new Set(games.map(x=>x.id)).size!==games.length)throw failed();
+  return {ok:true,games};
+}
+function spectateDTO(result) {
+  const raw=result?.match,failed=()=>new HttpError(503,'観戦データを確認できませんでした。','INVALID_SPECTATE');
+  if(!raw||!uuid(raw.id)||raw.status!=='playing'||!['host','guest'].includes(raw.turn)||
+    !integer(raw.round,1,MAX_ROUND)||raw.version!==2 ||
+    typeof raw.host?.name!=='string'||!raw.host.name.trim()||raw.host.name.length>20||
+    typeof raw.guest?.name!=='string'||!raw.guest.name.trim()||raw.guest.name.length>20||
+    !integer(raw.scores?.host,0,3)||!integer(raw.scores?.guest,0,3)||
+    !stateDTO(raw.state)||
+    !['turnStartedAt','turnExpiresAt','serverNow'].every(key=>typeof raw[key]==='string'&&Number.isFinite(Date.parse(raw[key]))))
+    throw failed();
+  const match={id:raw.id,status:'playing',turn:raw.turn,round:raw.round,version:2,
+    host:{name:raw.host.name},guest:{name:raw.guest.name},scores:{host:raw.scores.host,guest:raw.scores.guest},
+    state:stateDTO(raw.state),turnStartedAt:raw.turnStartedAt,turnExpiresAt:raw.turnExpiresAt,serverNow:raw.serverNow};
+  if(raw.lastRound!=null){
+    const last=raw.lastRound;
+    if(!integer(last.round,1,MAX_ROUND)||last.round>=raw.round||
+       ![null,'host','guest'].includes(last.goal)||!Array.isArray(last.frames)||last.frames.length>181||
+       last.frames.some(frame=>!stateDTO(frame)))throw failed();
+    match.lastRound={round:last.round,goal:last.goal,frames:last.frames.map(stateDTO)};
+  }
+  return {ok:true,match,social:socialDTO(result)};
+}
 function resolutionId(claim) {
   const hex = crypto.createHash('sha256').update('two-player-resolution\0' + claim.claimToken).digest('hex');
   return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-4' + hex.slice(13, 16) + '-8' + hex.slice(17, 20) + '-' + hex.slice(20, 32);
@@ -176,7 +225,7 @@ function requestUrl(req) {
   if (routes.length && metadata !== undefined && routes[0] !== metadata) throw invalid();
   const route = routes[0] ?? metadata;
   if (route !== undefined) {
-    if (!/^(?:session|login|logout|rooms|rooms\/join|match|offer|ready|formation|input|cancel|ranking|lobby(?:\/(?:heartbeat|leave))?|challenge(?:\/(?:accept|decline|cancel))?|queue(?:\/cancel)?)$/.test(route)) throw invalid();
+    if (!/^(?:session|login|logout|rooms|rooms\/join|match|offer|ready|formation|input|cancel|ranking|watch(?:\/games|\/leave)?|social\/(?:feed|stamp)|lobby(?:\/(?:heartbeat|leave))?|challenge(?:\/(?:accept|decline|cancel))?|queue(?:\/cancel)?)$/.test(route)) throw invalid();
     const pathname = '/api/' + route;
     if (!['/api/index', '/api/index.js', pathname].includes(url.pathname)) throw invalid();
     url.pathname = pathname;
@@ -197,6 +246,7 @@ function createHandler(overrides = {}) {
   const rpc = overrides.rpc || store.rpc;
   const lobbyRpc = overrides.lobbyRpc || store.lobbyRpc;
   const rankingRpc = overrides.rankingRpc || store.rankingRpc;
+  const socialRpc = overrides.socialRpc || store.socialRpc;
   const simulate = overrides.simulate || ((state, inputs, formations) => require('../public/physics.js').simulate(state, inputs, formations));
   async function processResult(result, member, config) {
     if (!result._processing) return result;
@@ -232,7 +282,7 @@ function createHandler(overrides = {}) {
       diagnosticContext.queryKeyCount = url.searchParams.size;
       diagnosticContext.otherQueryCount = url.searchParams.size - captures.length;
       const routes = {'/api/session': ['GET'], '/api/login': ['POST'], '/api/logout': ['POST'], '/api/rooms': ['GET', 'POST'],
-        '/api/rooms/join': ['POST'], '/api/match': ['GET'], '/api/ranking': ['GET'], '/api/offer': ['POST'], '/api/ready': ['POST'], '/api/formation': ['POST'], '/api/input': ['POST'], '/api/cancel': ['POST'],
+        '/api/rooms/join': ['POST'], '/api/match': ['GET'], '/api/ranking': ['GET'], '/api/watch/games': ['GET'], '/api/watch': ['GET'], '/api/watch/leave': ['POST'], '/api/social/feed': ['GET'], '/api/social/stamp': ['POST'], '/api/offer': ['POST'], '/api/ready': ['POST'], '/api/formation': ['POST'], '/api/input': ['POST'], '/api/cancel': ['POST'],
         '/api/lobby': ['GET'], '/api/lobby/heartbeat': ['POST'], '/api/lobby/leave': ['POST'], '/api/challenge': ['POST'],
         '/api/challenge/accept': ['POST'], '/api/challenge/decline': ['POST'], '/api/challenge/cancel': ['POST'], '/api/queue': ['POST'], '/api/queue/cancel': ['POST']};
       const allowed = routes[url.pathname];
@@ -287,6 +337,40 @@ function createHandler(overrides = {}) {
         diagnosticContext.phase = 'dto';
         return sendJson(res, 200, lobbyDTO({...result, ...processed}, member.id));
       }
+      if (url.pathname === '/api/watch/games') {
+        if(url.search)throw invalid();
+        return sendJson(res,200,liveGamesDTO(await socialRpc('list',actor,config)));
+      }
+      if (url.pathname === '/api/watch') {
+        const params=[...url.searchParams];
+        if(params.length!==2||!uuid(url.searchParams.get('matchId'))||
+          !/^[0-9]{1,10}$/.test(url.searchParams.get('afterRound')||'')||
+          Number(url.searchParams.get('afterRound'))>MAX_ROUND ||
+          new Set(params.map(x=>x[0])).size!==2 ||
+          params.some(x=>!['matchId','afterRound'].includes(x[0])))throw invalid();
+        const result=await socialRpc('watch',{...actor,matchId:url.searchParams.get('matchId'),
+          afterRound:Number(url.searchParams.get('afterRound'))},config);
+        return sendJson(res,200,spectateDTO(result));
+      }
+      if(url.pathname==='/api/social/feed'){
+        const params=[...url.searchParams];
+        if(params.length!==1||params[0][0]!=='matchId'||!uuid(params[0][1]))throw invalid();
+        return sendJson(res,200,{ok:true,social:socialDTO(await socialRpc('feed',{...actor,matchId:params[0][1]},config))});
+      }
+      if(url.pathname==='/api/social/stamp'){
+        if(url.search)throw invalid();
+        const body=await readJson(req);exact(body,['matchId','stampId']);
+        if(!uuid(body.matchId)||!integer(body.stampId,1,5))throw invalid();
+        const result=await socialRpc('stamp',{...actor,...body},config);
+        return sendJson(res,200,{ok:true,stamp:stampDTO(result.stamp)});
+      }
+      if(url.pathname==='/api/watch/leave'){
+        if(url.search)throw invalid();
+        const body=await readJson(req);exact(body,['matchId']);
+        if(!uuid(body.matchId))throw invalid();
+        await socialRpc('leave',{...actor,matchId:body.matchId},config);
+        return sendJson(res,200,{ok:true});
+      }
       if (url.pathname === '/api/ranking') {
         if (url.search) throw invalid();
         return sendJson(res, 200, rankingDTO(await rankingRpc('list', actor, config)));
@@ -313,4 +397,4 @@ function createHandler(overrides = {}) {
     }
   };
 }
-module.exports = {createHandler, mutationInput, lobbyInput, lobbyActor, publicDTO, lobbyDTO, rankingDTO, stateDTO, requestUrl};
+module.exports = {createHandler, mutationInput, lobbyInput, lobbyActor, publicDTO, lobbyDTO, rankingDTO, stampDTO, socialDTO, liveGamesDTO, spectateDTO, stateDTO, requestUrl};

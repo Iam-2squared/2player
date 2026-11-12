@@ -8,7 +8,8 @@
   const MAX_WALLET_AMOUNT = 10000000000000;
   const validStake = value => Number.isSafeInteger(value) && value >= 100 && value <= MAX_WALLET_AMOUNT && value % 100 === 0;
   const COLORS = ['#f04d50', '#08b2d4'];
-  const VIEWS = ['boot', 'login', 'lobby', 'room', 'game'];
+  const VIEWS = ['boot', 'login', 'lobby', 'room', 'game', 'spectate'];
+  const STAMPS = Object.freeze(['おつw', 'うっまw', 'お願いします', 'あざした〜w', 'もう一戦しよ']);
   const fmt = value => new Intl.NumberFormat('ja-JP').format(Number(value) || 0);
   const S = {
     user: null, wallet: null, match: null, booting: true,
@@ -19,6 +20,9 @@
     pending: null, angle: 270, power: 65, piece: 0, animation: null, animationQueue: [], raf: 0,
     cancelOpen: false, offerVersion: '', noticeTimer: null, noticeKind: '',
     dragging: null, displayedRound: null, connectionLost: false,
+    social: {viewers:[],stamp:null}, socialTask:null, stampTimer:null, seenStampKey:'', lastStampSent:0,
+    liveGames:[], liveGamesAt:0, liveGamesTask:null,
+    watch:null, watchTask:null,
   };
   const clockReceipts = new WeakMap();
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -109,10 +113,14 @@
     clearTimeout(S.poll);
     clearTimeout(S.heartbeat);
     clearTimeout(S.turnTimer);
+    clearTimeout(S.stampTimer);
+    show('pitch-stamp',false);show('spectate-stamp',false);
     stopAnimation();
     S.user = user;
     S.wallet = wallet;
     S.match = null;
+    S.watch = null; S.watchTask=null; S.liveGames=[]; S.liveGamesAt=0; S.liveGamesTask=null;
+    S.social={viewers:[],stamp:null}; S.socialTask=null;S.seenStampKey='';S.lastStampSent=0;
     S.matchTask = null;
     S.matchSnapshot = 0;
     S.turnClock = null;
@@ -163,7 +171,7 @@
         outgoing: Array.isArray(data.lobby.outgoing) ? data.lobby.outgoing : [],
       };
     }
-    if (data.match) applyMatch(data.match, initial);
+    if (data.match && !S.watch) applyMatch(data.match, initial);
     render();
   }
 
@@ -242,6 +250,7 @@
     applyTurnClock(match);
     saveActive(match.id);
     if (changed) {
+      S.social={viewers:[],stamp:null}; S.seenStampKey=''; S.socialTask=null;
       S.lobbyGeneration += 1;
       stopAnimation();
       S.dragging = null;
@@ -330,7 +339,7 @@
   async function refreshLobby({ heartbeat = false } = {}) {
     const epoch = S.epoch;
     const generation = S.lobbyGeneration;
-    if (!S.user || document.hidden) return;
+    if (!S.user || document.hidden || S.watch) return;
     const active = S.lobbyTask;
     if (active && active.epoch === epoch && active.generation === generation) {
       await active.promise;
@@ -349,7 +358,7 @@
         S.lobbyApplied = sequence;
         applyData(data);
         markConnected();
-        if (!S.match) void refreshRanking();
+        if (!S.match && !S.watch){void refreshRanking();void refreshLiveGames();}
       } catch (error) {
         if (generation !== S.lobbyGeneration || sequence < S.lobbyApplied) return;
         handlePollError(error, epoch);
@@ -384,6 +393,119 @@
     return task;
   }
 
+  // Stamps are fixed code points, never arbitrary HTML or user-provided text.
+  function showStamp(stamp, matchId) {
+    if(!stamp || !Number.isSafeInteger(stamp.stampId) || stamp.stampId<1 || stamp.stampId>STAMPS.length)return;
+    const key=matchId+':'+stamp.id;
+    if(S.seenStampKey===key)return;
+    S.seenStampKey=key;
+    const prefix=S.watch?'spectate':'pitch';
+    clearTimeout(S.stampTimer);
+    text(prefix+'-stamp-from',stamp.fromName);
+    text(prefix+'-stamp-text',STAMPS[stamp.stampId-1]);
+    show('pitch-stamp',false);show('spectate-stamp',false);
+    show(prefix+'-stamp',true);
+    const epoch=S.epoch;
+    S.stampTimer=setTimeout(()=>{if(epoch===S.epoch)show(prefix+'-stamp',false);},2200);
+  }
+  function processSocial(value,matchId) {
+    if(!value || !Array.isArray(value.viewers))return;
+    if(!S.watch)S.social={viewers:value.viewers,stamp:value.stamp||null};
+    if(value.stamp)showStamp(value.stamp,matchId);
+    if(S.watch)renderSpectate();else if(S.match?.id===matchId)render();
+  }
+  async function refreshSocial() {
+    const matchId=S.match?.id,epoch=S.epoch;
+    if(!S.user||!matchId||S.watch||S.match.status!=='playing'||document.hidden||S.socialTask)return;
+    const task=(async()=>{
+      try{
+        const data=await request('social/feed?matchId='+encodeURIComponent(matchId),{epoch});
+        if(epoch===S.epoch&&!S.watch&&S.match?.id===matchId)processSocial(data.social,matchId);
+      }catch(error){if(epoch===S.epoch&&error.status===401)handlePollError(error,epoch);}
+      finally{if(S.socialTask===task)S.socialTask=null;}
+    })();
+    S.socialTask=task;
+    return task;
+  }
+  async function sendStamp(stampId) {
+    if(!S.user||S.watch||S.match?.status!=='playing'||
+      !Number.isInteger(stampId)||stampId<1||stampId>STAMPS.length||
+      S.lastStampSent&&Date.now()-S.lastStampSent<5000)return;
+    const epoch=S.epoch,matchId=S.match.id;
+    S.lastStampSent=Date.now();
+    for(const button of document.querySelectorAll('[data-soccer-stamp]'))button.disabled=true;
+    $('stamp-picker').open=false;
+    try{
+      const data=await request('social/stamp',{method:'POST',body:{matchId,stampId},epoch});
+      if(epoch!==S.epoch||S.watch||S.match?.id!==matchId)return;
+      processSocial({viewers:S.social.viewers,stamp:data.stamp},matchId);
+    }catch(error){
+      if(epoch!==S.epoch)return;
+      if(error.status===401)handlePollError(error,epoch);
+      else notify(error.message||'スタンプを送れませんでした。',true);
+    }finally{
+      if(epoch===S.epoch)for(const button of document.querySelectorAll('[data-soccer-stamp]'))button.disabled=false;
+    }
+  }
+  async function refreshLiveGames(force=false) {
+    if(!S.user||S.watch||S.match||document.hidden||
+      (!force&&S.liveGamesAt&&Date.now()-S.liveGamesAt<8000)||S.liveGamesTask)return;
+    const epoch=S.epoch;
+    const task=(async()=>{
+      try{
+        const data=await request('watch/games',{epoch});
+        if(epoch!==S.epoch||S.watch||S.match)return;
+        S.liveGames=Array.isArray(data.games)?data.games:[];
+        S.liveGamesAt=Date.now();
+        render();
+      }catch(error){
+        if(epoch===S.epoch&&!S.match&&!S.watch){S.liveGamesAt=Date.now();if(error.status===401)handlePollError(error,epoch);}
+      }finally{if(S.liveGamesTask===task)S.liveGamesTask=null;}
+    })();
+    S.liveGamesTask=task;
+    return task;
+  }
+  async function beginSpectate(matchId) {
+    if(!S.user||S.match||S.watch||S.busy||!S.liveGames.some(game=>game.id===matchId))return;
+    S.lobbyGeneration+=1;
+    S.watch={id:matchId,match:null,afterRound:0,receivedAt:0};
+    S.seenStampKey='';
+    stopAnimation();
+    clearTimeout(S.poll);
+    render();
+    await refreshSpectate();
+    schedulePoll(600);
+  }
+  async function refreshSpectate() {
+    const epoch=S.epoch,watch=S.watch;
+    if(!S.user||!watch||document.hidden||S.watchTask)return;
+    const task=(async()=>{
+      try{
+        const data=await request('watch?matchId='+encodeURIComponent(watch.id)+'&afterRound='+watch.afterRound,{epoch});
+        if(epoch!==S.epoch||S.watch!==watch)return;
+        const first=!watch.match;
+        watch.match=data.match;
+        watch.receivedAt=performance.now();
+        const last=data.match?.lastRound;
+        if(last?.round>watch.afterRound){
+          watch.afterRound=last.round;
+          if(!first&&Array.isArray(last.frames)&&last.frames.length>1)playFrames(last.frames,last.goal);
+        }
+        processSocial(data.social,watch.id);
+        markConnected();
+        render();
+      }catch(error){
+        if(epoch!==S.epoch||S.watch!==watch)return;
+        if(error.status===404||error.status===403){
+          notify(error.message||'観戦が終了しました。',false);
+          void enterLobby();
+        }else handlePollError(error,epoch);
+      }finally{if(S.watchTask===task)S.watchTask=null;}
+    })();
+    S.watchTask=task;
+    return task;
+  }
+
   async function refreshMatch({ initial = false, matchId = S.match?.id } = {}) {
     const epoch = S.epoch;
     const generation = S.lobbyGeneration;
@@ -402,6 +524,7 @@
         if (epoch !== S.epoch || generation !== S.lobbyGeneration || (S.match && S.match.id !== matchId)) return;
         applyData(data, { initial: task.initial });
         markConnected();
+        if(S.match?.status==='playing'&&!S.watch)void refreshSocial();
       } catch (error) {
         if (epoch !== S.epoch || generation !== S.lobbyGeneration || observed !== S.matchSnapshot) return;
         if (error.status === 404 || error.status === 403) {
@@ -434,11 +557,12 @@
     if (!S.user || document.hidden) return;
     S.poll = setTimeout(async () => {
       const epoch = S.epoch;
-      if (!S.busy) {
-        if (S.match && !isEnded(S.match)) await refreshMatch();
-        else if (!S.match) await refreshLobby();
+      if(!S.busy){
+        if(S.watch)await refreshSpectate();
+        else if(S.match && !isEnded(S.match))await refreshMatch();
+        else if(!S.match)await refreshLobby();
       }
-      if (epoch === S.epoch) schedulePoll(S.match ? 1800 : 2500);
+      if(epoch===S.epoch)schedulePoll(S.watch?2000:S.match?1800:2500);
     }, delay);
   }
 
@@ -447,7 +571,7 @@
     if (!S.user || document.hidden) return;
     const epoch = S.epoch;
     S.heartbeat = setTimeout(async () => {
-      if (!S.heartbeatTask) {
+      if (!S.watch&&!S.heartbeatTask) {
         const task = refreshLobby({ heartbeat: true });
         S.heartbeatTask = task;
         await task;
@@ -467,7 +591,7 @@
 
   function render() {
     const match = S.match;
-    const active = S.booting ? 'boot' : !S.user ? 'login' : !match ? 'lobby' : match.status === 'waiting' ? 'room' : 'game';
+    const active = S.booting ? 'boot' : !S.user ? 'login' : S.watch ? 'spectate' : !match ? 'lobby' : match.status === 'waiting' ? 'room' : 'game';
     for (const view of VIEWS) show(`${view}-view`, active === view);
     show('account', !!S.user && !S.booting);
     if (S.user) {
@@ -481,6 +605,7 @@
     if (active === 'lobby') renderLobby(blocked);
     if (active === 'room') renderRoom(blocked);
     if (active === 'game') renderGame(blocked);
+    if (active === 'spectate') renderSpectate();
     drawCurrent();
     scheduleTurnClock();
   }
@@ -565,6 +690,18 @@
       list.append(button);
     }
 
+    const live=$('live-games');live.replaceChildren();
+    for(const game of S.liveGames){
+      const card=document.createElement('div');card.className='live-game-card';
+      const info=document.createElement('div');info.className='live-game-score';
+      const names=document.createElement('strong');names.textContent=`${game.host} vs ${game.guest}`;
+      const score=document.createElement('small');score.textContent=`${game.scores.host} – ${game.scores.guest} · ${fmt(game.round)}手目`;
+      info.append(names,score);
+      const button=document.createElement('button');button.type='button';button.className='button secondary small';button.textContent='観戦';button.disabled=blocked;
+      button.addEventListener('click',()=>{void beginSpectate(game.id);});
+      card.append(info,button);live.append(card);
+    }
+    show('live-games-empty',S.liveGames.length===0);
     const ranking = $('ranking-users');
     ranking.replaceChildren();
     for (const entry of S.ranking) {
@@ -581,6 +718,23 @@
       ? 'ランキングを取得できませんでした。更新ボタンで再確認できます。'
       : S.rankingLoaded ? 'まだ勝利記録がありません' : 'ランキングを読み込み中…');
     show('ranking-empty', S.ranking.length === 0);
+  }
+
+  function renderSpectate() {
+    const watch=S.watch,match=watch?.match;
+    text('spectate-status',match?'閲覧専用で観戦中':'試合を読み込み中…');
+    if(!match)return;
+    text('spectate-host',match.host?.name||'');
+    text('spectate-guest',match.guest?.name||'');
+    text('spectate-host-score',scoreOf('host',match));
+    text('spectate-guest-score',scoreOf('guest',match));
+    text('spectate-round',`${fmt(match.round)}手目`);
+    const deadline=Date.parse(match.turnExpiresAt);
+    const server=Date.parse(match.serverNow);
+    const elapsed=performance.now()-(watch.receivedAt||performance.now());
+    const remaining=Number.isFinite(deadline)&&Number.isFinite(server)?
+      Math.max(0,Math.ceil((deadline-server-elapsed)/1000)):null;
+    text('spectate-turn',`${match[match.turn]?.name||''}の番${remaining===null?'':` · ${remaining}秒`}`);
   }
 
   function renderRoom(blocked) {
@@ -634,6 +788,10 @@
     text('score-host-name', match.host?.name || '');
     text('score-guest-name', match.guest?.name || '');
     text('score-host', scoreOf('host')); text('score-guest', scoreOf('guest'));
+    const watchers=S.social.viewers;
+    text('watching-status', watchers.length ? `${watchers.slice(0,3).join('、')}${watchers.length>3?'ほか':''}が観戦中` : '');
+    show('watching-status',watchers.length>0);
+    show('stamp-control',!ended);
     for(const side of ['host','guest']){
       const count=Number(match[side]?.timeoutStreak??0);
       const label=$('score-'+side+'-timeouts');
@@ -740,6 +898,10 @@
 
   function drawCurrent() {
     if (!$('game-view').hidden) drawPitch($('pitch'), currentState(), seat(), canShoot());
+    if (!$('spectate-view').hidden && S.watch?.match) {
+      const state=S.animation ? currentState() : S.watch.match.state;
+      drawPitch($('spectate-pitch'),validState(state)?state:INITIAL,0,false);
+    }
   }
 
   function polygon(ctx, points, fill, stroke, width = 3) {
@@ -877,12 +1039,16 @@
 
   async function enterLobby() {
     S.lobbyGeneration += 1;
+    const leaveMatch=S.watch?.id;
+    S.watch=null;S.watchTask=null;
     stopAnimation();
+    clearTimeout(S.stampTimer);show('spectate-stamp',false);show('pitch-stamp',false);
     S.match = null;
     S.cancelOpen = false;
     S.rankingAt = 0;
     saveActive(null);
     render();
+    if(leaveMatch)void request('watch/leave',{method:'POST',body:{matchId:leaveMatch}}).catch(()=>{});
     await refreshLobby();
     schedulePoll();
   }
@@ -945,6 +1111,8 @@
   }
   $('logout-button').addEventListener('click', async () => {
     if (S.busy) return;
+    const watching=S.watch?.id;
+    if(watching)void request('watch/leave',{method:'POST',body:{matchId:watching}}).catch(()=>{});
     S.booting = true;
     setSession(null, null);
     render();
@@ -969,7 +1137,11 @@
     });
   });
   $('leave-room').addEventListener('click', () => { if (S.match?.status === 'waiting') void mutate('cancel', { matchId: S.match.id }); });
-  $('refresh-lobby').addEventListener('click', () => { void refreshLobby({ heartbeat: true }); void refreshRanking(true); });
+  $('refresh-lobby').addEventListener('click', () => { void refreshLobby({ heartbeat: true }); void refreshRanking(true); void refreshLiveGames(true); });
+  $('exit-spectate').addEventListener('click',()=>{void enterLobby();});
+  for(const button of document.querySelectorAll('[data-soccer-stamp]')){
+    button.addEventListener('click',()=>{void sendStamp(Number(button.dataset.soccerStamp));});
+  }
   $('retry-action').addEventListener('click', () => { if (S.pending) void mutate(S.pending.path, S.pending.body, { retry: true }); });
   $('aim-angle').addEventListener('input', () => { if (!canShoot()) return; S.angle = Number($('aim-angle').value); updateAimControls(); });
   $('aim-power').addEventListener('input', () => { if (!canShoot()) return; S.power = Number($('aim-power').value); updateAimControls(); });
@@ -1048,7 +1220,7 @@
       S.pending = pending?.body?.requestId ? pending : null;
       render();
     }
-    if (event.key === accountKey('active')) schedulePoll(50);
+    if (event.key === accountKey('active')&&!S.watch) schedulePoll(50);
   });
 
   updateAimControls();

@@ -22,6 +22,8 @@ funds; both players select their own real stakes in the matched room and must
 explicitly confirm the two displayed amounts before funding. Direct challenges
 still require acceptance and random pairing still uses arrival order.
 
+During matches, players can send one of eight preset short text stamps (including the three newest options) to the court center. The fixed-code messages are also visible to spectators. Five-second cooldown and short-lived storage remain in effect. No sticker images are loaded for these messages.
+
 The ranking counts +1 win per completed 3-goal victory. Winning 3:0 gives
 +3 points, 3:1 gives +2 and 3:2 gives +1; losses, draws, and cancellations
 give zero wins/points, never penalties. Rankings use settled Target records

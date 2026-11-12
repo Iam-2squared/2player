@@ -9,7 +9,7 @@
   const validStake = value => Number.isSafeInteger(value) && value >= 100 && value <= MAX_WALLET_AMOUNT && value % 100 === 0;
   const COLORS = ['#f04d50', '#08b2d4'];
   const VIEWS = ['boot', 'login', 'lobby', 'room', 'game', 'spectate'];
-  const STAMPS = Object.freeze(['おつw', 'うっまw', 'お願いします', 'あざした〜w', 'もう一戦しよ']);
+  const STAMPS = Object.freeze(['おつw', 'うっまw', 'お願いします', 'あざした〜w', 'もう一戦しよ', 'うおw', '死ね🖕', '死ぬw']);
   const fmt = value => new Intl.NumberFormat('ja-JP').format(Number(value) || 0);
   const S = {
     user: null, wallet: null, match: null, booting: true,

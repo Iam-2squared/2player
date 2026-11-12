@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#142a39">
+  <title>2player | KGS 11th</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="2player ホーム"><span class="brand-mark" aria-hidden="true"><i></i><i></i></span><span>2player<span class="brand-dot">.</span></span></a>
+    <a class="back-link" href="https://kgs01-git-codex-kgs01-shared-release-iam-2squareds-projects.vercel.app">KGS 11th ↗</a>
+    <div class="account" id="account" hidden><span id="account-name"></span><strong><span id="wallet-balance">0</span> <small>轟</small></strong><button class="icon-button" id="logout-button" type="button" aria-label="ログアウト" title="ログアウト">↪</button></div>
+  </header>
+  <main id="main">
+    <div class="notice" id="notice" role="status" aria-live="polite" hidden><span id="notice-text"></span><button id="notice-close" type="button" aria-label="閉じる">×</button></div>
+    <div class="retry-notice" id="retry-notice" role="alert" hidden><span>通信を確認できませんでした</span><button class="button small" id="retry-action" type="button">再確認</button></div>
+    <section class="boot-view" id="boot-view" aria-label="読み込み中"><span class="loader" aria-hidden="true"></span></section>
+    <section class="login-view" id="login-view" hidden>
+      <form class="panel login-card" id="login-form"><div class="login-fields"><label for="attendance">出席番号<select id="attendance" name="attendanceNo" autocomplete="username" required><option value="">選択</option></select></label><label for="pin">PIN<input id="pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="current-password" placeholder="••••" required></label></div><p class="field-error" id="login-error" role="alert" hidden></p><button class="button primary full" id="login-submit" type="submit">ログイン</button></form>
+    </section>
+    <section id="lobby-view" class="lobby-view" hidden>
+      <form class="panel matchmaking-settings" id="random-form"><button class="button primary full" id="random-button" type="submit">ランダム</button><div class="queue-wait" id="queue-wait" role="status" aria-live="polite" hidden><span id="queue-status">待機中</span><button class="button small secondary" id="queue-cancel" type="button">取消</button></div></form>
+      <section class="online-panel" aria-label="ログイン中のユーザー"><div class="list-heading"><span>ログイン中 <small id="online-count">0</small></span><button class="text-button" id="refresh-lobby" type="button" aria-label="更新">↻</button></div>
+        <div class="lobby-invitations" id="challenge-panel" aria-label="対戦の申込み" hidden><div id="incoming-challenges"></div><div id="outgoing-challenges"></div></div>
+        <div id="online-users"></div><p class="small-status online-empty" id="online-empty">—</p></section>
+      <section class="watch-list-panel" aria-label="観戦できる試合"><div class="list-heading"><span>対戦中の試合を観戦</span></div><div id="live-games"></div><p class="small-status" id="live-games-empty">現在、観戦できる試合はありません。</p></section>
+      <section class="ranking-panel" aria-label="サッカーランキング"><div class="list-heading"><span>ランキング</span><span class="ranking-legend">勝利 +1勝 · 3–0/+3pt · 3–1/+2pt · 3–2/+1pt · 時間切れ勝ち/+1pt</span></div><div id="ranking-users"></div><p class="small-status ranking-empty" id="ranking-empty">勝利記録はまだありません</p></section>
+    </section>
+    <section id="room-view" class="room-view" hidden>
+      <div class="room-top"><button class="text-button" id="leave-room" type="button">戻る</button></div>
+      <div class="panel room-players"><div class="player-card red-team"><span class="player-disc" aria-hidden="true"></span><div class="player-card-main"><strong id="host-name"></strong><span id="host-state"></span></div><span class="player-offer" id="host-offer"></span></div><div class="player-card blue-team"><span class="player-disc" aria-hidden="true"></span><div class="player-card-main"><strong id="guest-name"></strong><span id="guest-state"></span></div><span class="player-offer" id="guest-offer"></span></div><p class="room-info" id="room-info"></p></div>
+      <div class="panel stake-panel"><p class="stake-guidance">対戦相手が決まりました。ここで賭け額を決め、両者が確認してから試合を開始します。</p><form id="offer-form"><label for="stake">賭け額<div class="offer-row"><div class="money-input"><input id="stake" type="number" inputmode="numeric" min="100" step="100" value="100" aria-describedby="stake-limits" required><span>轟</span></div><button class="button secondary" id="offer-submit" type="submit">変更</button></div></label></form><div class="pot-summary"><span>賞金</span><strong><span id="room-pot">200</span> <small>轟</small></strong></div><button class="button primary full" id="ready-button" type="button">準備完了</button><p class="small-status" id="ready-hint"></p></div><p class="small-status" id="room-expiry"></p>
+    </section>
+    <section class="game-view" id="game-view" hidden>
+      <div class="match-header"><div class="turn-banner" id="turn-banner" data-team=""><span id="turn-title" aria-live="polite"><strong id="turn-name"></strong> <span id="turn-action">…</span></span><span class="turn-clock" id="turn-clock" aria-label="残り時間を確認中">—</span></div><div class="match-meta"><span class="move-count" id="round-label">1手目</span><strong><span id="game-pot">200</span> <small>轟</small></strong></div></div>
+      <div class="spectator-watching-status" id="watching-status" aria-live="polite" hidden></div>
+       <div class="pitch-shell"><div class="scoreboard"><div class="score-team red-team" id="score-host-team"><span class="team-pip"></span><span class="score-name" id="score-host-name"></span><span class="score-timeout-streak" id="score-host-timeouts" hidden></span></div><div class="score-numbers"><span id="score-host">0</span><span class="score-colon">:</span><span id="score-guest">0</span></div><div class="score-team blue-team" id="score-guest-team"><span class="score-name" id="score-guest-name"></span><span class="score-timeout-streak" id="score-guest-timeouts" hidden></span><span class="team-pip"></span></div></div><canvas id="pitch" width="640" height="960" aria-label="自分の色の駒を押し、後ろに引いて離すと反対向きに弾きます。引く距離が長いほど強くなります。" tabindex="0"></canvas><div class="pitch-stamp" id="pitch-stamp" aria-live="polite" hidden><span id="pitch-stamp-from"></span><strong id="pitch-stamp-text"></strong></div></div>
+      <div class="text-stamp-control" id="stamp-control"><details id="stamp-picker"><summary>💬 スタンプ</summary><div class="stamp-buttons" role="group" aria-label="送るスタンプ"><button type="button" data-soccer-stamp="1">おつw</button><button type="button" data-soccer-stamp="2">うっまw</button><button type="button" data-soccer-stamp="3">お願いします</button><button type="button" data-soccer-stamp="4">あざした〜w</button><button type="button" data-soccer-stamp="5">もう一戦しよ</button><button type="button" data-soccer-stamp="6">うおw</button><button type="button" data-soccer-stamp="7">死ね🖕</button><button type="button" data-soccer-stamp="8">死ぬw</button></div></details></div>
+      <div class="game-tools"><span class="team-key" id="team-label"></span><span class="escrow-label">預り <span id="escrow-amount">100</span> 轟</span><button class="text-button" id="cancel-button" type="button">中止</button><details id="keyboard-controls"><summary aria-label="方向と強さで操作" title="方向と強さで操作">⌨</summary><div class="panel aim-panel" id="aim-panel"><label class="piece-label" for="aim-piece">駒<select id="aim-piece" aria-label="弾く駒"><option value="0">1</option><option value="1">2</option><option value="2">3</option><option value="3">4</option><option value="4">5</option><option value="5">6</option><option value="6">7</option><option value="7">8</option></select></label><label class="slider-label" for="aim-angle"><span>方向</span><output id="angle-output" for="aim-angle">270°</output></label><input class="aim-slider" id="aim-angle" type="range" min="0" max="359" step="1" value="270" aria-describedby="angle-help"><span class="sr-only" id="angle-help">0度は右、90度は下、180度は左、270度は上。ピッチ上では左右キーで方向、上下キーで強さを調整できます。</span><label class="slider-label" for="aim-power"><span>強さ</span><output id="power-output" for="aim-power">65%</output></label><input class="aim-slider" id="aim-power" type="range" min="0" max="100" step="1" value="65"><button class="button shot-button full" id="lock-input" type="button">弾く</button></div></details></div>
+      <div class="panel cancel-panel" id="cancel-panel" hidden><strong id="cancel-title">中止しますか？</strong><p id="cancel-copy">両者の同意で全額返却。</p><div class="button-row"><button class="button danger small" id="confirm-cancel" type="button">中止に同意</button><button class="text-button" id="dismiss-cancel" type="button">戻る</button></div></div>
+      <div class="panel result-panel" id="result-panel" hidden><h2 id="result-title"></h2><p class="result-amount" id="result-amount"></p><p class="small-status" id="result-copy"></p><div class="result-balance">残高 <strong><span id="result-balance">0</span> 轟</strong></div><button class="button primary full" id="rematch-button" type="button">もう一戦</button><button class="text-button full" id="back-lobby" type="button">ロビー</button></div>
+    </section>
+    <section class="spectate-view" id="spectate-view" hidden aria-label="試合観戦">
+      <div class="spectate-header"><button class="button secondary small" type="button" id="exit-spectate">観戦をやめる</button><strong>ライブ観戦</strong></div>
+      <p class="spectate-status" id="spectate-status" role="status">試合を読み込み中…</p>
+      <div class="spectate-scoreboard"><strong id="spectate-host"></strong><span><b id="spectate-host-score">0</b> : <b id="spectate-guest-score">0</b></span><strong id="spectate-guest"></strong></div>
+      <div class="spectate-meta"><span id="spectate-round"></span><span id="spectate-turn"></span></div>
+      <div class="pitch-shell spectate-pitch-shell"><canvas id="spectate-pitch" width="640" height="960" aria-label="観戦中のコート。操作はできません。"></canvas><div class="pitch-stamp" id="spectate-stamp" aria-live="polite" hidden><span id="spectate-stamp-from"></span><strong id="spectate-stamp-text"></strong></div></div>
+      <p class="spectate-footnote">閲覧専用です。シュートや賭け金の操作はできません。</p>
+    </section>
+  </main>
+</body>
+</html>

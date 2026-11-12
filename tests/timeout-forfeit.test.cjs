@@ -2,7 +2,8 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
-const {matchDTO}=require('../server/router.cjs');
+const {publicDTO}=require('../server/router.cjs');
+const matchDTO=raw=>publicDTO({match:raw}).match;
 
 function sample(){
  return {id:'11111111-1111-4111-8111-111111111111',status:'playing',mode:'alternating',

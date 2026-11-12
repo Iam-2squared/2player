@@ -167,7 +167,7 @@ function rankingDTO(result) {
 function stampDTO(raw) {
   const failed=()=>new HttpError(503,'スタンプを確認できませんでした。','INVALID_SOCIAL');
   if(!raw || typeof raw.id!=='string' || !/^[0-9]{1,18}$/.test(raw.id) ||
-     !integer(raw.stampId,1,5) || typeof raw.fromName!=='string' ||
+     !integer(raw.stampId,1,8) || typeof raw.fromName!=='string' ||
      !raw.fromName.trim() || raw.fromName.length>20 ||
      typeof raw.sentAt!=='string' || !Number.isFinite(Date.parse(raw.sentAt))) throw failed();
   return {id:raw.id,stampId:raw.stampId,fromName:raw.fromName,sentAt:raw.sentAt};
@@ -360,7 +360,7 @@ function createHandler(overrides = {}) {
       if(url.pathname==='/api/social/stamp'){
         if(url.search)throw invalid();
         const body=await readJson(req);exact(body,['matchId','stampId']);
-        if(!uuid(body.matchId)||!integer(body.stampId,1,5))throw invalid();
+        if(!uuid(body.matchId)||!integer(body.stampId,1,8))throw invalid();
         const result=await socialRpc('stamp',{...actor,...body},config);
         return sendJson(res,200,{ok:true,stamp:stampDTO(result.stamp)});
       }

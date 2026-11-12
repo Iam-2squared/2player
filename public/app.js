@@ -393,6 +393,119 @@
     return task;
   }
 
+  // Stamps are fixed code points, never arbitrary HTML or user-provided text.
+  function showStamp(stamp, matchId) {
+    if(!stamp || !Number.isSafeInteger(stamp.stampId) || stamp.stampId<1 || stamp.stampId>STAMPS.length)return;
+    const key=matchId+':'+stamp.id;
+    if(S.seenStampKey===key)return;
+    S.seenStampKey=key;
+    const prefix=S.watch?'spectate':'pitch';
+    clearTimeout(S.stampTimer);
+    text(prefix+'-stamp-from',stamp.fromName);
+    text(prefix+'-stamp-text',STAMPS[stamp.stampId-1]);
+    show('pitch-stamp',false);show('spectate-stamp',false);
+    show(prefix+'-stamp',true);
+    const epoch=S.epoch;
+    S.stampTimer=setTimeout(()=>{if(epoch===S.epoch)show(prefix+'-stamp',false);},2200);
+  }
+  function processSocial(value,matchId) {
+    if(!value || !Array.isArray(value.viewers))return;
+    if(!S.watch)S.social={viewers:value.viewers,stamp:value.stamp||null};
+    if(value.stamp)showStamp(value.stamp,matchId);
+    if(S.watch)renderSpectate();else if(S.match?.id===matchId)render();
+  }
+  async function refreshSocial() {
+    const matchId=S.match?.id,epoch=S.epoch;
+    if(!S.user||!matchId||S.watch||S.match.status!=='playing'||document.hidden||S.socialTask)return;
+    const task=(async()=>{
+      try{
+        const data=await request('social/feed?matchId='+encodeURIComponent(matchId),{epoch});
+        if(epoch===S.epoch&&!S.watch&&S.match?.id===matchId)processSocial(data.social,matchId);
+      }catch(error){if(epoch===S.epoch&&error.status===401)handlePollError(error,epoch);}
+      finally{if(S.socialTask===task)S.socialTask=null;}
+    })();
+    S.socialTask=task;
+    return task;
+  }
+  async function sendStamp(stampId) {
+    if(!S.user||S.watch||S.match?.status!=='playing'||
+      !Number.isInteger(stampId)||stampId<1||stampId>STAMPS.length||
+      S.lastStampSent&&Date.now()-S.lastStampSent<5000)return;
+    const epoch=S.epoch,matchId=S.match.id;
+    S.lastStampSent=Date.now();
+    for(const button of document.querySelectorAll('[data-soccer-stamp]'))button.disabled=true;
+    $('stamp-picker').open=false;
+    try{
+      const data=await request('social/stamp',{method:'POST',body:{matchId,stampId},epoch});
+      if(epoch!==S.epoch||S.watch||S.match?.id!==matchId)return;
+      processSocial({viewers:S.social.viewers,stamp:data.stamp},matchId);
+    }catch(error){
+      if(epoch!==S.epoch)return;
+      if(error.status===401)handlePollError(error,epoch);
+      else notify(error.message||'スタンプを送れませんでした。',true);
+    }finally{
+      if(epoch===S.epoch)for(const button of document.querySelectorAll('[data-soccer-stamp]'))button.disabled=false;
+    }
+  }
+  async function refreshLiveGames(force=false) {
+    if(!S.user||S.watch||S.match||document.hidden||
+      (!force&&S.liveGamesAt&&Date.now()-S.liveGamesAt<8000)||S.liveGamesTask)return;
+    const epoch=S.epoch;
+    const task=(async()=>{
+      try{
+        const data=await request('watch/games',{epoch});
+        if(epoch!==S.epoch||S.watch||S.match)return;
+        S.liveGames=Array.isArray(data.games)?data.games:[];
+        S.liveGamesAt=Date.now();
+        render();
+      }catch(error){
+        if(epoch===S.epoch&&!S.match&&!S.watch){S.liveGamesAt=Date.now();if(error.status===401)handlePollError(error,epoch);}
+      }finally{if(S.liveGamesTask===task)S.liveGamesTask=null;}
+    })();
+    S.liveGamesTask=task;
+    return task;
+  }
+  async function beginSpectate(matchId) {
+    if(!S.user||S.match||S.watch||S.busy||!S.liveGames.some(game=>game.id===matchId))return;
+    S.lobbyGeneration+=1;
+    S.watch={id:matchId,match:null,afterRound:0,receivedAt:0};
+    S.seenStampKey='';
+    stopAnimation();
+    clearTimeout(S.poll);
+    render();
+    await refreshSpectate();
+    schedulePoll(600);
+  }
+  async function refreshSpectate() {
+    const epoch=S.epoch,watch=S.watch;
+    if(!S.user||!watch||document.hidden||S.watchTask)return;
+    const task=(async()=>{
+      try{
+        const data=await request('watch?matchId='+encodeURIComponent(watch.id)+'&afterRound='+watch.afterRound,{epoch});
+        if(epoch!==S.epoch||S.watch!==watch)return;
+        const first=!watch.match;
+        watch.match=data.match;
+        watch.receivedAt=performance.now();
+        const last=data.match?.lastRound;
+        if(last?.round>watch.afterRound){
+          watch.afterRound=last.round;
+          if(!first&&Array.isArray(last.frames)&&last.frames.length>1)playFrames(last.frames,last.goal);
+        }
+        processSocial(data.social,watch.id);
+        markConnected();
+        render();
+      }catch(error){
+        if(epoch!==S.epoch||S.watch!==watch)return;
+        if(error.status===404||error.status===403){
+          notify(error.message||'観戦が終了しました。',false);
+          void enterLobby();
+        }else handlePollError(error,epoch);
+      }finally{if(S.watchTask===task)S.watchTask=null;}
+    })();
+    S.watchTask=task;
+    return task;
+  }
+
   async function refreshMatch({ initial = false, matchId = S.match?.id } = {}) {
     const epoch = S.epoch;
     const generation = S.lobbyGeneration;

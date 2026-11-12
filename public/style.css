@@ -42,3 +42,44 @@
   .score-team{flex-wrap:wrap}
   .score-timeout-streak{font-size:7px}
 }
+
+/* Live soccer spectating and text-only match stamps. No image assets. */
+.watch-list-panel{margin:24px 0 30px}.watch-list-panel .list-heading{margin-bottom:8px}
+.live-game-card{display:flex;align-items:center;gap:9px;padding:12px;margin-top:7px;background:white;border:1px solid var(--line);border-radius:10px}
+.live-game-score{min-width:0;flex:1}.live-game-score strong{display:block;font-size:12px;overflow-wrap:anywhere}
+.live-game-score small{display:block;margin-top:4px;color:var(--muted);font-size:10px}
+.live-game-card .button{flex:none}
+.spectate-view{max-width:480px;margin:12px auto 36px}
+.spectate-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px auto 10px;width:min(100%,calc((100svh - 204px)*2/3));max-width:480px}
+.spectate-header strong{font-size:12px}
+.spectate-status{text-align:center;color:#536779;font-size:11px;min-height:1.6em;margin-bottom:5px}
+.spectate-scoreboard{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:8px;padding:10px 12px;background:var(--navy);color:#fff;border-radius:10px 10px 0 0;width:min(100%,calc((100svh - 204px)*2/3));max-width:480px;margin:auto}
+.spectate-scoreboard strong{font-size:11px;overflow-wrap:anywhere;line-height:1.4}
+.spectate-scoreboard strong:last-child{text-align:right}
+.spectate-scoreboard>span{font-size:21px;font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums}
+.spectate-meta{display:flex;justify-content:space-between;color:#526477;font-size:10px;width:min(100%,calc((100svh - 204px)*2/3));max-width:480px;margin:7px auto}
+.spectate-pitch-shell{position:relative}
+.spectate-pitch-shell canvas{display:block;width:100%;touch-action:auto;cursor:default}
+.spectate-footnote{text-align:center;font-size:10px;color:#677783;margin:10px 0 0}
+.spectator-watching-status{font-size:11px;color:#397083;padding:4px 8px;margin:0 auto 5px;max-width:480px;text-align:center;white-space:normal;overflow-wrap:anywhere}
+.pitch-shell{position:relative}
+.pitch-stamp{position:absolute;z-index:4;left:50%;top:54%;transform:translate(-50%,-50%);max-width:90%;min-width:120px;padding:13px 18px;border:2px solid #fff8;border-radius:14px;background:#132632eb;color:#fff;text-align:center;box-shadow:0 8px 22px #0b282c60;pointer-events:none;animation:stamp-pop .18s ease-out}
+.pitch-stamp span{display:block;font-size:9px;opacity:.83;margin-bottom:4px}
+.pitch-stamp strong{display:block;font-size:clamp(15px,4vw,23px);font-weight:800;white-space:nowrap}
+@keyframes stamp-pop{from{opacity:0;transform:translate(-50%,-50%) scale(.84)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+.text-stamp-control{width:min(100%,calc((100svh - 204px)*2/3));max-width:480px;margin:10px auto}
+.text-stamp-control details>summary{list-style:none;cursor:pointer;display:block;padding:9px 12px;font-size:12px;font-weight:700;text-align:center;background:#fff;border:1px solid #ccd5db;border-radius:8px}
+.text-stamp-control details>summary::-webkit-details-marker{display:none}
+.stamp-buttons{display:flex;gap:7px;flex-wrap:wrap;padding:10px 0 2px}
+.stamp-buttons button{background:white;color:var(--navy);border:1px solid #c5d4da;border-radius:8px;font-size:12px;font-weight:650;padding:9px 11px;min-height:35px}
+.stamp-buttons button:disabled{opacity:.45;cursor:default}
+@media(max-width:650px){
+ .spectate-header,.spectate-scoreboard,.spectate-meta,.text-stamp-control{width:min(100%,calc((100svh - 198px)*2/3))}
+ .spectate-view .pitch-shell{width:min(100%,calc((100svh - 198px)*2/3))}
+ .spectate-scoreboard{gap:5px;padding:7px}
+ .spectate-scoreboard strong{font-size:9px}
+ .spectate-scoreboard>span{font-size:17px}
+ .pitch-stamp{padding:9px 11px;min-width:90px}
+ .pitch-stamp strong{font-size:15px}
+ .stamp-buttons button{font-size:10px;padding:8px}
+}

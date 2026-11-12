@@ -720,6 +720,23 @@
     show('ranking-empty', S.ranking.length === 0);
   }
 
+  function renderSpectate() {
+    const watch=S.watch,match=watch?.match;
+    text('spectate-status',match?'閲覧専用で観戦中':'試合を読み込み中…');
+    if(!match)return;
+    text('spectate-host',match.host?.name||'');
+    text('spectate-guest',match.guest?.name||'');
+    text('spectate-host-score',scoreOf('host',match));
+    text('spectate-guest-score',scoreOf('guest',match));
+    text('spectate-round',`${fmt(match.round)}手目`);
+    const deadline=Date.parse(match.turnExpiresAt);
+    const server=Date.parse(match.serverNow);
+    const elapsed=performance.now()-(watch.receivedAt||performance.now());
+    const remaining=Number.isFinite(deadline)&&Number.isFinite(server)?
+      Math.max(0,Math.ceil((deadline-server-elapsed)/1000)):null;
+    text('spectate-turn',`${match[match.turn]?.name||''}の番${remaining===null?'':` · ${remaining}秒`}`);
+  }
+
   function renderRoom(blocked) {
     const match = S.match;
     const role = myRole();
@@ -1094,6 +1111,8 @@
   }
   $('logout-button').addEventListener('click', async () => {
     if (S.busy) return;
+    const watching=S.watch?.id;
+    if(watching)void request('watch/leave',{method:'POST',body:{matchId:watching}}).catch(()=>{});
     S.booting = true;
     setSession(null, null);
     render();
@@ -1118,7 +1137,11 @@
     });
   });
   $('leave-room').addEventListener('click', () => { if (S.match?.status === 'waiting') void mutate('cancel', { matchId: S.match.id }); });
-  $('refresh-lobby').addEventListener('click', () => { void refreshLobby({ heartbeat: true }); void refreshRanking(true); });
+  $('refresh-lobby').addEventListener('click', () => { void refreshLobby({ heartbeat: true }); void refreshRanking(true); void refreshLiveGames(true); });
+  $('exit-spectate').addEventListener('click',()=>{void enterLobby();});
+  for(const button of document.querySelectorAll('[data-soccer-stamp]')){
+    button.addEventListener('click',()=>{void sendStamp(Number(button.dataset.soccerStamp));});
+  }
   $('retry-action').addEventListener('click', () => { if (S.pending) void mutate(S.pending.path, S.pending.body, { retry: true }); });
   $('aim-angle').addEventListener('input', () => { if (!canShoot()) return; S.angle = Number($('aim-angle').value); updateAimControls(); });
   $('aim-power').addEventListener('input', () => { if (!canShoot()) return; S.power = Number($('aim-power').value); updateAimControls(); });
@@ -1197,7 +1220,7 @@
       S.pending = pending?.body?.requestId ? pending : null;
       render();
     }
-    if (event.key === accountKey('active')) schedulePoll(50);
+    if (event.key === accountKey('active')&&!S.watch) schedulePoll(50);
   });
 
   updateAimControls();

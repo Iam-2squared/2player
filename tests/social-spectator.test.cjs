@@ -24,10 +24,10 @@ const social={viewers:['観戦ユーザー'],stamp};
 test('social DTO strict fixed stamps, small spectator list and no financial secrets',()=>{
  assert.deepEqual(stampDTO(stamp),stamp);
  assert.deepEqual(socialDTO({social}),social);
- for(const bad of [null,{...stamp,stampId:6},{...stamp,id:'a'}, {...stamp,fromName:''},{...stamp,stampId:'1'}]){
+ for(const bad of [null,{...stamp,stampId:9},{...stamp,id:'a'}, {...stamp,fromName:''},{...stamp,stampId:'1'}]){
   assert.throws(()=>stampDTO(bad),error=>error.code==='INVALID_SOCIAL');
  }
- for(const bad of [{viewers:['good',42],stamp:null},{viewers:Array(21).fill('A'),stamp:null},{viewers:[],stamp:{...stamp,stampId:6}}]){
+ for(const bad of [{viewers:['good',42],stamp:null},{viewers:Array(21).fill('A'),stamp:null},{viewers:[],stamp:{...stamp,stampId:9}}]){
   assert.throws(()=>socialDTO({social:bad}),error=>error.code==='INVALID_SOCIAL');
  }
  const raw=currentMatch(),out=spectateDTO({match:raw,social});
@@ -79,7 +79,7 @@ test('spectator and stamps require a real KGS session, exact inputs, and same-or
  assert.equal((await req('watch?matchId='+matchId+'&afterRound=-1')).status,400);
  assert.equal((await req('watch?matchId='+matchId+'&afterRound=0&memberId='+actor.id)).status,400);
  assert.equal((await req('social/stamp',{matchId,stampId:1,text:'custom'})).status,400);
- assert.equal((await req('social/stamp',{matchId,stampId:6})).status,400);
+ assert.equal((await req('social/stamp',{matchId,stampId:9})).status,400);
  assert.equal((await req('social/stamp',{matchId,stampId:'1'})).status,400);
  assert.equal((await req('social/feed?matchId='+matchId+'&other=1')).status,400);
  assert.equal(calls.length,0,'invalid requests cannot touch database');
@@ -95,10 +95,15 @@ test('spectator and stamps require a real KGS session, exact inputs, and same-or
  const event=await req('social/stamp',{matchId,stampId:3});
  assert.equal(event.status,200);
  assert.deepEqual((await event.json()).stamp,stamp);
+ for(const newId of [6,7,8]){
+  const next=await req('social/stamp',{matchId,stampId:newId});
+  assert.equal(next.status,200);
+  assert.equal((await next.json()).stamp.stampId,3,'mocked upstream sanitization remains stable');
+ }
  const feed=await req('social/feed?matchId='+matchId);
  assert.deepEqual((await feed.json()).social,social);
  assert.equal((await req('watch/leave',{matchId})).status,200);
- assert.deepEqual(calls.map(c=>c.action),['list','watch','stamp','feed','leave']);
+ assert.deepEqual(calls.map(c=>c.action),['list','watch','stamp','stamp','stamp','stamp','feed','leave']);
  for(const call of calls){
   assert.equal(call.input.memberId,actor.id);
   assert.equal(call.input.name,actor.name);
@@ -106,14 +111,19 @@ test('spectator and stamps require a real KGS session, exact inputs, and same-or
  assert.equal(requestUrl({url:'/api/index?route=watch%2Fgames&path=watch%2Fgames'}).pathname,'/api/watch/games');
  assert.equal(requestUrl({url:'/api/index?route=social%2Fstamp&path=social%2Fstamp'}).pathname,'/api/social/stamp');
 });
-test('only five built-in text labels are displayed at the center of the court',()=>{
+test('all eight built-in text labels are displayed at the center of the court',()=>{
  const html=fs.readFileSync(require.resolve('../public/index.html'),'utf8');
  const app=fs.readFileSync(require.resolve('../public/app.js'),'utf8');
  const css=fs.readFileSync(require.resolve('../public/style.css'),'utf8');
- for(const word of ['おつw','うっまw','お願いします','あざした〜w','もう一戦しよ']) assert(html.includes('>'+word+'</button>'));
+ for(const word of ['おつw','うっまw','お願いします','あざした〜w','もう一戦しよ','うおw','死ね🖕','死ぬw']) assert(html.includes('>'+word+'</button>'));
  for(const id of ['pitch-stamp','spectate-stamp','spectate-pitch','watching-status','live-games','exit-spectate'])
   assert(html.includes('id="'+id+'"'));
  assert(html.includes('aria-label="観戦中のコート。操作はできません。"'));
+ for(const [id,label] of [[6,'うおw'],[7,'死ね🖕'],[8,'死ぬw']]){
+  assert(html.includes('data-soccer-stamp="'+id+'"'));
+  assert(app.includes("'"+label+"'"));
+ }
+ assert(app.includes('STAMPS.length'));
  assert(css.includes('top:54%'));
  assert(app.includes("S.watch?2000:S.match?1800:2500"));
  assert(app.includes('await refreshSpectate()'));

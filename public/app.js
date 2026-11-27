@@ -140,7 +140,8 @@
     S.offerVersion = '';
     S.displayedRound = null;
     const saved = user ? readStorage(accountKey('pending')) : null;
-    S.pending = saved && typeof saved.path === 'string' && saved.body?.requestId ? saved : null;
+    S.pending = saved && typeof saved.path === 'string' && saved.path !== 'queue' && saved.body?.requestId ? saved : null;
+    if (saved?.path === 'queue') writeStorage(accountKey('pending'), null);
     S.ranking = []; S.rankingLoaded = false; S.rankingAt = 0; S.rankingTask = null; S.rankingError = false;
     $('pin').value = '';
     $('login-error').hidden = true;
@@ -287,6 +288,7 @@
     const epoch = S.epoch;
     const operation = retry ? S.pending : { path, body: { ...body, requestId: newId() }, matchId: S.match?.id || '', createdAt: Date.now() };
     if (!operation) return;
+    if(operation.path==='queue'){clearPending();render();return;}
     S.pending = operation;
     writeStorage(accountKey('pending'), operation);
     const generation = ++S.lobbyGeneration;
@@ -629,12 +631,8 @@
   }
 
   function renderLobby(blocked) {
-    const queued = !!S.lobby.queue;
-    $('random-button').disabled = blocked || queued || S.lobby.outgoing.length > 0;
-    show('random-button', !queued);
-    show('queue-wait', queued);
-    text('queue-status', Number.isInteger(S.lobby.queue?.position) ? `待機中 · ${S.lobby.queue.position}番目` : '待機中');
-    $('queue-cancel').disabled = blocked;
+    // A queue from a previous release is retired without opening a new match.
+    if (S.lobby.queue && !blocked) queueMicrotask(()=>{if(S.lobby.queue&&!S.busy&&!S.pending&&!S.match)void mutate('queue/cancel',{});});
     $('refresh-lobby').disabled = blocked;
 
     const incoming = $('incoming-challenges'), outgoing = $('outgoing-challenges');
@@ -1122,12 +1120,7 @@
     render();
   });
   $('notice-close').addEventListener('click', () => show('notice', false));
-  $('random-form').addEventListener('submit', event => {
-    event.preventDefault();
-    const selected = preferences();
-    if (selected && !$('random-button').disabled) void mutate('queue', selected);
-  });
-  $('queue-cancel').addEventListener('click', () => { void mutate('queue/cancel', {}); });
+  $('solo-button').addEventListener('click', event => { if (S.busy || S.pending || S.match) event.preventDefault(); });
   $('offer-form').addEventListener('submit', event => { event.preventDefault(); if ($('offer-form').reportValidity() && S.match?.status === 'waiting') void mutate('offer', { matchId: S.match.id, stake: Number($('stake').value) }); });
   $('stake').addEventListener('input', () => { if (S.match?.status === 'waiting') renderRoom(!!S.busy || !!S.pending); });
   $('ready-button').addEventListener('click', () => {
@@ -1217,7 +1210,7 @@
     if (!S.user) return;
     if (event.key === accountKey('pending') && !S.busy) {
       const pending = readStorage(accountKey('pending'));
-      S.pending = pending?.body?.requestId ? pending : null;
+      S.pending = pending?.body?.requestId && pending.path !== 'queue' ? pending : null;
       render();
     }
     if (event.key === accountKey('active')&&!S.watch) schedulePoll(50);

@@ -290,6 +290,8 @@ function createHandler(overrides = {}) {
       if (!allowed.includes(req.method)) { res.setHeader('Allow', allowed.join(', ')); throw new HttpError(405, 'この操作には対応していません。', 'METHOD_NOT_ALLOWED'); }
       const config = requestConfig(configFor());
       if (req.method === 'POST') checkOrigin(req, config); else checkReadOrigin(req, config);
+      // The old random queue is retired; keep cancellation for outstanding legacy entries.
+      if (url.pathname === '/api/queue' && !(process.env.NODE_ENV==='test' && overrides.legacyQueueRegression===true)) throw new HttpError(410,'ランダム対戦は終了しました。相手を指定してください。','RANDOM_MATCH_RETIRED');
       if (url.pathname === '/api/session' && !auth.sessionToken(req, config)) return sendJson(res, 200, {ok: true, user: null, wallet: null});
       if (url.pathname === '/api/login') {
         const body = await readJson(req);

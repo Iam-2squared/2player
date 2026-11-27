@@ -15,12 +15,13 @@ Stakes start at 100轟 in 100轟 increments, with no separate game limit.
 Both players must have enough available funds and settlement headroom within
 the shared wallet's existing 10,000,000,000,000轟 representation limit.
 
-The lobby now shows only ランダム, the online-member list, and the points
-ranking. No stake input is shown until an opponent has been paired. The queue
-and direct invitations use a temporary 100-轟 placeholder that never reserves
-funds; both players select their own real stakes in the matched room and must
-explicitly confirm the two displayed amounts before funding. Direct challenges
-still require acceptance and random pairing still uses arrival order.
+The lobby offers ソロゲーム, the online-member list, and the points ranking.
+New soccer matches use named challenges and explicit acceptance only. The
+legacy random queue endpoint returns 410; old cancellation remains available
+for cleanup. Direct invitations and the existing soccer flow are unchanged.
+The standalone TEN LINK puzzle uses a 5×5 number board, 60-second rounds,
+vertical/horizontal/diagonal paths totaling ten and gold links for bonus
+points. Its best score stays in the browser; it never calls a wallet API.
 
 During matches, players can send one of eight preset short text stamps (including the three newest options) to the court center. The fixed-code messages are also visible to spectators. Five-second cooldown and short-lived storage remain in effect. No sticker images are loaded for these messages.
 

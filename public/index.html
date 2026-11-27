@@ -22,7 +22,7 @@
       <form class="panel login-card" id="login-form"><div class="login-fields"><label for="attendance">出席番号<select id="attendance" name="attendanceNo" autocomplete="username" required><option value="">選択</option></select></label><label for="pin">PIN<input id="pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="current-password" placeholder="••••" required></label></div><p class="field-error" id="login-error" role="alert" hidden></p><button class="button primary full" id="login-submit" type="submit">ログイン</button></form>
     </section>
     <section id="lobby-view" class="lobby-view" hidden>
-      <form class="panel matchmaking-settings" id="random-form"><button class="button primary full" id="random-button" type="submit">ランダム</button><div class="queue-wait" id="queue-wait" role="status" aria-live="polite" hidden><span id="queue-status">待機中</span><button class="button small secondary" id="queue-cancel" type="button">取消</button></div></form>
+      <div class="panel matchmaking-settings"><a class="button primary full" id="solo-button" href="/solo.html">ソロゲーム</a></div>
       <section class="online-panel" aria-label="ログイン中のユーザー"><div class="list-heading"><span>ログイン中 <small id="online-count">0</small></span><button class="text-button" id="refresh-lobby" type="button" aria-label="更新">↻</button></div>
         <div class="lobby-invitations" id="challenge-panel" aria-label="対戦の申込み" hidden><div id="incoming-challenges"></div><div id="outgoing-challenges"></div></div>
         <div id="online-users"></div><p class="small-status online-empty" id="online-empty">—</p></section>

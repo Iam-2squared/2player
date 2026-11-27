@@ -34,7 +34,7 @@ function createServer(overrides = {}) {
 if (require.main === module) {
   const port = Number(process.env.PORT || 3000);
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new Error('Invalid PORT');
-  const server = createServer();
+  const server = createServer({legacyQueueRegression:process.env.NODE_ENV==='test' && process.env.LEGACY_QUEUE_REGRESSION==='1'});
   server.listen(port, process.env.HOST || '0.0.0.0', () => process.stdout.write('2player dev server ready on port ' + server.address().port + '\n'));
 }
 module.exports = {createServer};

@@ -1,0 +1,23 @@
+name: Solo game browser checks
+on:
+  pull_request:
+    paths:
+      - 'public/**'
+      - 'tests/e2e-solo.cjs'
+      - '.github/workflows/solo-browser.yml'
+permissions:
+  contents: read
+jobs:
+  solo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: node --check public/solo.js
+      - run: npx playwright install --with-deps chromium webkit
+      - run: node tests/e2e-solo.cjs

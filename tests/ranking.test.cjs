@@ -62,7 +62,8 @@ test('lobby presents no stake controls before a verified opponent exists',()=>{
  const js=fs.readFileSync(require.resolve('../public/app.js'),'utf8');
  const lobby=html.split('<section id="lobby-view"')[1].split('<section id="room-view"')[0];
  assert(!/lobby-stake|賭け額|type="number"/.test(lobby));
- assert(lobby.includes('id="random-button"'));
+ assert(lobby.includes('id="solo-button"') && lobby.includes('href="/solo.html"'));
+ assert(!lobby.includes('id="random-button"')&&!lobby.includes('id="queue-wait"'));
  assert(lobby.includes('id="online-users"'));
  assert(lobby.includes('id="ranking-users"'));
  assert(!js.includes("$('lobby-stake')"));

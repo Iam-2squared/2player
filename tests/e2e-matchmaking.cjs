@@ -110,7 +110,7 @@ async function createDatabase() {
 async function startApp(databaseUrl) {
   const port = await freePort(); appBase = 'http://127.0.0.1:' + port;
   const child = spawn(process.execPath, ['scripts/dev.cjs'], { cwd: root, env: {
-    ...process.env, NODE_ENV: 'test', VERCEL: '', PORT: String(port),
+    ...process.env, NODE_ENV: 'test', LEGACY_QUEUE_REGRESSION:'1', VERCEL: '', PORT: String(port),
     TWO_PLAYER_DATABASE_URL: databaseUrl, TWO_PLAYER_RPC_SECRET: secret,
     TWO_PLAYER_COOKIE_SECRET: cookieSecret,
     TWO_PLAYER_KGS_INTEGRATION_SECRET: identitySecret, KGS_IDENTITY_URL: identityBase,
@@ -321,9 +321,9 @@ async function actualScenarios(browser) {
       eq(await page.locator('[id*="formation"]').count(), 0, 'No manual formation controls remain in the actual page');
       const before = await Promise.all([money(A), money(B)]);
 
-      await clickReply('#random-button', paths.queue); await visible(page, '#queue-wait');
-      eq(Object.keys(commands.find(value => value.pathname === paths.queue).body).sort(), ['requestId', 'stake']);
-      await clickReply('#queue-cancel', paths.unqueue); await page.waitForFunction(() => document.getElementById('queue-wait').hidden);
+      eq(await page.locator('#random-button').count(),0,'Random pairing is retired in the actual browser');
+      eq(await page.locator('#solo-button').getAttribute('href'),'/solo.html');
+      eq(commands.filter(value=>value.pathname===paths.queue).length,0,'No new random queue command is sent');
 
       const invited = await challenge(B, players[0], 100), invitationId = invited.lobby.outgoing[0].id;
       await visible(page, '[data-accept-invitation="' + invitationId + '"]');
@@ -867,28 +867,23 @@ async function browserScenarios(origin) {
         eq(await page.locator('[id*="formation"]').count(), 0, 'The matched room has no manual formation picker');
         sharedFormation(fixture.match);
         await page.click('#leave-room'); await visible(page, '#lobby-view');
-        await page.click('#random-button'); await visible(page, '#queue-wait');
-        eq(Object.keys(fixture.calls.find(item => item.path === paths.queue).input).sort(), ['requestId', 'stake'], 'Random waiting carries no formation preference');
-        ok(/待機|1/.test(await page.locator('#queue-status').textContent()));
-        const otherDevice = await browser.newContext({viewport:{width:320,height:740},reducedMotion:'reduce'});
-        try {
-          await otherDevice.route('**/*',route=>{const url=new URL(route.request().url());if(url.origin===parsedOrigin&&url.pathname.startsWith('/api/'))return fixture.handle(route);return url.origin===parsedOrigin?route.continue():route.abort();});
-          const restored=await otherDevice.newPage();restored.on('pageerror',error=>browserErrors.push({browser:name,message:error.message}));
-          await restored.goto(origin,{waitUntil:'networkidle'});await visible(restored,'#queue-wait');
-          eq(await restored.locator('#lobby-stake').count(),0,'A fresh session has no pre-match wager input');
-          eq(await restored.locator('[id*="formation"]').count(),0,'A fresh device has no formation controls');
-          ok(await restored.locator('#random-button').isHidden(),'Queued random button cannot resubmit');
-        } finally {await otherDevice.close();}
-        const queueSnapshot = fixture.delayLobby(); await page.click('#refresh-lobby');
-        await Promise.race([queueSnapshot.entered, delay(5000).then(() => {throw Error('Missing held queue snapshot');})]);
-        await page.click('#queue-cancel'); await page.waitForFunction(() => document.getElementById('queue-wait').hidden);
-        queueSnapshot.release(); await page.waitForTimeout(100);
-        ok(await page.locator('#queue-wait').isHidden(), 'A delayed pre-cancellation snapshot cannot requeue the user');
-        ok(await page.locator('#lobby-view').isVisible(), 'Cancelling waiting stays in the lobby');
-        await page.click('#random-button'); await visible(page, '#queue-wait'); fixture.pair(); await page.click('#refresh-lobby');
+        eq(await page.locator('#random-button').count(),0,'Random pairing is no longer exposed');
+        await page.click('#solo-button'); await visible(page, '#start');
+        await page.click('#start'); await visible(page, '#board');
+        eq(await page.locator('#board .node').count(),25,'Solo has a five by five board');
+        const puzzlePath=await page.evaluate(()=>TenLink.findMove([...document.querySelectorAll('#board .node')].map(n=>Number(n.dataset.number))));
+        const centers=await page.locator('#board .node').evaluateAll(ns=>ns.map(n=>{const r=n.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};}));
+        await page.mouse.move(centers[puzzlePath[0]].x,centers[puzzlePath[0]].y);await page.mouse.down();
+        for(const i of puzzlePath.slice(1))await page.mouse.move(centers[i].x,centers[i].y,{steps:5});
+        await page.mouse.up();await page.waitForFunction(()=>Number(document.querySelector('#score').textContent.replaceAll(',',''))>0);
+        await page.click('#quit');await visible(page,'#result');
+        await page.click('#result a');await visible(page,'#lobby-view');
+        ok(!fixture.calls.some(item=>item.path===paths.queue),'The solo game never creates a random queue');
+        const selectedInvite=fixture.addInvitation(100);await page.click('#refresh-lobby');
+        await visible(page,'[data-accept-invitation="'+selectedInvite+'"]');await page.click('[data-accept-invitation="'+selectedInvite+'"]');
         await visible(page, '#room-view');
         await page.click('#ready-button'); await visible(page, '#game-view');
-        eq(await page.locator('#game-pot').textContent(), '200', 'Random pairing funds the confirmed default room amount');
+        eq(await page.locator('#game-pot').textContent(), '200', 'Named pairing funds the confirmed default room amount');
         await page.waitForFunction(() => !document.getElementById('lock-input').disabled);
         ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Mobile game has no horizontal overflow');
         const own = fixture.match.state.players[4], canvas = page.locator('#pitch'); await canvas.scrollIntoViewIfNeeded();

@@ -93,21 +93,21 @@ test('authenticated Vercel source captures reach lobby and heartbeat without wea
   assert.equal(f.calls.length, 2);
 });
 
-test('challenge and queue inputs bind actor, bound preferences and reject self or forged authority', async t => {
+test('named challenge inputs bind actor, bound preferences and reject self or forged authority', async t => {
   const f = await fixture(t);
   const valid = {requestId: crypto.randomUUID(), targetId: other.memberId, stake: 100, formation: 2};
   for (const extra of [{memberId: other.memberId}, {name: 'forged'}, {sessionId: 'x'.repeat(64)}, {winner: 'host'}, {code: 'ABCDEF'}]) {
     assert.equal((await f.request('challenge', {...valid, ...extra})).status, 400);
   }
   for (const value of [member.id, member.id.toUpperCase(), 'missing']) assert.equal((await f.request('challenge', {...valid, targetId: value})).status, 400);
-  for (const stake of [0, 99, 101, 100001, 10000000000100, Number.MAX_SAFE_INTEGER + 1, '100']) assert.equal((await f.request('queue', {requestId: crypto.randomUUID(), stake, formation: 0})).status, 400);
-  for (const formation of [-1, 3, 1.5, '1']) assert.equal((await f.request('queue', {requestId: crypto.randomUUID(), stake: 100, formation})).status, 400);
+  for (const stake of [0, 99, 101, 100001, 10000000000100, Number.MAX_SAFE_INTEGER + 1, '100']) assert.equal((await f.request('challenge', {requestId: crypto.randomUUID(), targetId:other.memberId, stake, formation: 0})).status, 400);
+  for (const formation of [-1, 3, 1.5, '1']) assert.equal((await f.request('challenge', {requestId: crypto.randomUUID(), targetId:other.memberId, stake: 100, formation})).status, 400);
   assert.equal(f.calls.length, 0);
   assert.equal((await f.request('challenge', valid)).status, 200);
   assert.equal(f.calls[0].action, 'challenge');
   assert.deepEqual(Object.fromEntries(Object.entries(f.calls[0].input).filter(([key]) => key !== 'sessionId')), {...valid, memberId: member.id, name: member.name});
-  assert.equal((await f.request('queue', {requestId: crypto.randomUUID(), stake: 200, formation: 1})).status, 200);
-  assert.equal(f.calls[1].action, 'queue');
+  assert.equal((await f.request('queue', {requestId: crypto.randomUUID(), stake: 200, formation: 1})).status, 410);
+  assert.equal(f.calls.length,1,'retired route never reaches the queue RPC');
 });
 
 test('accept preserves the receiver preferences; decline and cancel cannot assert funding or a target', async t => {
@@ -127,7 +127,7 @@ test('accept preserves the receiver preferences; decline and cancel cannot asser
 
 test('stake-only lobby clients receive the same strict actor and compatible SQL envelope', async t => {
   const f = await fixture(t);
-  for (const [route, action, extra] of [['queue', 'queue', {}], ['challenge', 'challenge', {targetId: other.memberId}],
+  for (const [route, action, extra] of [['challenge', 'challenge', {targetId: other.memberId}],
     ['challenge/accept', 'accept', {invitationId}]]) {
     const body = {requestId: crypto.randomUUID(), stake: 200, ...extra};
     assert.equal((await f.request(route, body)).status, 200);
@@ -141,10 +141,10 @@ test('stake-only lobby clients receive the same strict actor and compatible SQL 
   }
 });
 
-test('challenge, acceptance and queue preserve stakes above the former cap and integer range', async t => {
+test('challenge and acceptance preserve stakes above the former cap and integer range', async t => {
   const f = await fixture(t);
   for (const stake of [100100, 1000000, 3000000000, 10000000000000]) {
-    for (const [route, action, extra] of [['queue', 'queue', {}], ['challenge', 'challenge', {targetId: other.memberId}],
+    for (const [route, action, extra] of [['challenge', 'challenge', {targetId: other.memberId}],
       ['challenge/accept', 'accept', {invitationId}]]) {
       const body = {requestId: crypto.randomUUID(), stake, ...extra};
       assert.equal((await f.request(route, body)).status, 200, `${action} accepts ${stake}`);

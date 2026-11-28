@@ -4,7 +4,7 @@
   "buildCommand": "node scripts/build.cjs",
   "installCommand": "npm ci --omit=dev",
   "outputDirectory": "dist",
-  "functions": {"api/index.js": {"includeFiles": "{server/**,public/physics.js,public/solo-rules.js,public/sky-rules.js,public/war-math.js,public/color-rules.js}", "excludeFiles": "{tests/**,docs/**}", "maxDuration": 30}},
+  "functions": {"api/index.js": {"includeFiles": "{server/**,public/physics.js,public/solo-rules.js,public/sky-rules.js,public/war-math.js,public/color-rules.js,public/trace-rules.js}", "excludeFiles": "{tests/**,docs/**}", "maxDuration": 30}},
   "rewrites": [{"source": "/api/:path*", "destination": "/api/index?route=:path*"}],
   "headers": [
     {"source": "/(.*)", "headers": [

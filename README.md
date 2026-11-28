@@ -15,7 +15,7 @@ Stakes start at 100轟 in 100轟 increments, with no separate game limit.
 Both players must have enough available funds and settlement headroom within
 the shared wallet's existing 10,000,000,000,000轟 representation limit.
 
-The KUSO Game home is a two-column catalog of square illustrated game tiles: 2player, TEN LINK, and GRAPH ROCKET. The 2player tile opens a focused online-opponent list at /?game=2player; the soccer ranking is shown beneath online opponents; the spectator list remains hidden, not deleted. TEN LINK keeps its existing game and leaderboard. GRAPH ROCKET is a local solo math puzzle: enter an origin-passing y=f(x) and launch along the graph in the first quadrant (0–10 on both axes) to destroy bases and incoming objects. Four one-shot levels with quadratic, cubic and quartic solutions. Every target must be hit on the same trajectory; failed attempts restart the current stage. Sparse axes display 1 and 10 without gridlines. Safe expression parsing supports arithmetic, powers, implicit multiplication and common functions. No wallet or database changes.
+The KUSO Game home is a two-column catalog of square illustrated game tiles: 2player, TEN LINK, GRAPH ROCKET, and SKY TARGET. The 2player tile opens a focused online-opponent list at /?game=2player; the soccer ranking is shown beneath online opponents; the spectator list remains hidden, not deleted. TEN LINK keeps its existing game and leaderboard. GRAPH ROCKET is a local solo math puzzle: enter an origin-passing y=f(x) and launch along the graph in the first quadrant (0–10 on both axes) to destroy bases and incoming objects. Four one-shot levels with quadratic, cubic and quartic solutions. Every target must be hit on the same trajectory; failed attempts restart the current stage. Sparse axes display 1 and 10 without gridlines. Safe expression parsing supports arithmetic, powers, implicit multiplication and common functions. No wallet or database changes.
 New soccer matches use named challenges and explicit acceptance only. The
 legacy random queue endpoint returns 410; old cancellation remains available
 for cleanup. Direct invitations and the existing soccer flow are unchanged.
@@ -50,3 +50,7 @@ and browser checks, and `docs/QA.md` for the original soccer verification.
 `npm run test:e2e` runs matchmaking checks; `npm run test:e2e:soccer` retains the
 isolated soccer API/ledger regression suite. Public-asset browser checks
 intercept every API request.
+
+### SKY TARGET and stage progress
+
+SKY TARGET is a landscape-only 60-second local arcade game. A three-second countdown precedes play. A randomly selected side launches one fixed-size target per second along a constant-gravity trajectory with varying angles and apex heights. Gold targets at 15, 30 and 45 seconds are worth five points; others are worth one. Drag the left side to move the scope and tap FIRE on the right (240 ms minimum interval). A hit breaks the target into falling fragments. Portrait and background visibility pause gameplay. No wallet or ranking API is used. GRAPH ROCKET stage selection unlocks each following level after clearing its predecessor, with highest cleared stage stored locally in this browser. No previous progress can be reconstructed because older versions did not store it.

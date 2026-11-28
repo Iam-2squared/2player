@@ -6,7 +6,10 @@ const el=(tag,attrs={})=>{const n=document.createElementNS(ns,tag);for(const [k,
 const X=x=>40+36*x,Y=y=>400-36*y;
 const pathData=points=>points.map((p,i)=>(i?'L':'M')+X(p.x).toFixed(2)+' '+Y(p.y).toFixed(2)).join(' ');
 let level=0,ammo=0,bases=[],incoming=[],busy=false,ended=false,won=false,animation=0,generation=0;
-const equation=$('equation'),fire=$('fire');
+const equation=$('equation'),fire=$('fire'),key='kuso.graph-rocket.progress.v1';
+let cleared=0,storageOK=true;try{const value=Number(localStorage.getItem(key));if(Number.isInteger(value)&&value>=0&&value<=R.stageCount)cleared=value;}catch{storageOK=false;}
+function menu(){generation++;cancelAnimationFrame(animation);busy=false;$('rocket-play').hidden=true;$('rocket-menu').hidden=false;const list=$('stage-list');list.replaceChildren();for(let i=0;i<R.stageCount;i++){const b=document.createElement('button');b.type='button';b.dataset.stage=i+1;b.disabled=i>cleared;b.textContent=String(i+1).padStart(2,'0')+(i<cleared?' ✓':i>cleared?' 🔒':'');b.setAttribute('aria-label','ステージ '+(i+1)+(i<cleared?' クリア済み':i>cleared?' 未解放':''));b.onclick=()=>start(i);list.append(b);}text('progress-status',cleared+' / '+R.stageCount+(storageOK?'':' · 保存できません'));}
+function storeClear(){cleared=Math.max(cleared,level+1);try{localStorage.setItem(key,String(cleared));}catch{storageOK=false;}}
 function text(id,value){$(id).textContent=value;}
 function ship(p={x:0,y:0},angle=45){$('ship').setAttribute('transform','translate('+X(p.x)+' '+Y(p.y)+') rotate('+angle+')');}
 function drawLabels(){
@@ -28,7 +31,7 @@ function drawTargets(){
  }
 }
 function hud(){text('stage',String(level+1).padStart(2,'0'));text('ammo',ammo);$('ammo').setAttribute('aria-label','残り発射回数 '+ammo);}
-function controls(){equation.disabled=busy||ended;fire.disabled=busy||ended;for(const b of $('symbols').querySelectorAll('button'))b.disabled=busy||ended;$('next').hidden=!ended;text('next',won?(level+1<R.stageCount?'次のステージ':'もう一度'):'リトライ');}
+function controls(){equation.disabled=busy||ended;fire.disabled=busy||ended;for(const b of $('symbols').querySelectorAll('button'))b.disabled=busy||ended;$('next').hidden=!ended;text('next',won?(level+1<R.stageCount?'次のステージ':'ステージ選択'):'リトライ');}
 function preview(){
  if(busy||ended)return;
  try{const points=R.trajectory(R.compile(equation.value));if(points.length<2)throw Error('原点から発射できる軌道を入力してください。');$('preview').setAttribute('d',pathData(points));text('status','');}
@@ -36,9 +39,9 @@ function preview(){
 }
 function drawStars(){let seed=914;const rand=()=>((seed=(Math.imul(seed,1664525)+1013904223)>>>0)/4294967296);for(let i=0;i<100;i++)$('stars').append(el('circle',{cx:rand()*440,cy:rand()*440,r:.35+rand()*1.05,fill:'#d6eaff',opacity:.15+rand()*.55}));}
 function start(index){
- generation++;cancelAnimationFrame(animation);level=index;const s=R.stage(level);ammo=s.shots;bases=s.bases;incoming=s.incoming;busy=false;ended=false;won=false;equation.value='x';$('trail').setAttribute('d','');$('trail-glow').setAttribute('d','');drawTargets();hud();controls();ship();preview();
+ if(!Number.isInteger(index)||index<0||index>=R.stageCount||index>cleared)return;$('rocket-menu').hidden=true;$('rocket-play').hidden=false;generation++;cancelAnimationFrame(animation);level=index;const s=R.stage(level);ammo=s.shots;bases=s.bases;incoming=s.incoming;busy=false;ended=false;won=false;equation.value='x';$('trail').setAttribute('d','');$('trail-glow').setAttribute('d','');drawTargets();hud();controls();ship();preview();
 }
-function end(success){ended=true;won=success;controls();text('status',success?(level+1===R.stageCount?'ALL CLEAR':'STAGE CLEAR'):'FAILED · '+(bases.length+incoming.length)+' LEFT');}
+function end(success){if(success)storeClear();ended=true;won=success;controls();text('status',success?(level+1===R.stageCount?'ALL CLEAR':'STAGE CLEAR'):'FAILED · '+(bases.length+incoming.length)+' LEFT');}
 function complete(){busy=false;ship();drawTargets();hud();end(!bases.length&&!incoming.length);}
 function launch(e){
  e.preventDefault();if(busy||ended||ammo<1)return;
@@ -54,7 +57,7 @@ function launch(e){
  };animation=requestAnimationFrame(step);
 }
 $('fire-form').addEventListener('submit',launch);equation.addEventListener('input',preview);
-$('reset').onclick=()=>start(level);$('next').onclick=()=>won?start(level+1<R.stageCount?level+1:0):start(level);
+$('reset').onclick=menu;$('next').onclick=()=>won?(level+1<R.stageCount?start(level+1):menu()):start(level);
 for(const button of $('symbols').querySelectorAll('button'))button.onclick=()=>{if(busy||ended)return;const a=equation.selectionStart??equation.value.length,b=equation.selectionEnd??a;equation.setRangeText(button.dataset.symbol,a,b,'end');equation.focus();preview();};
-drawStars();drawLabels();start(0);
+drawStars();drawLabels();menu();
 })();

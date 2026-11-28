@@ -3,7 +3,7 @@ const assert=require('node:assert/strict'),{chromium,webkit}=require('playwright
 (async()=>{const server=createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port;
 try{for(const engine of [chromium,webkit]){const browser=await engine.launch();try{const context=await browser.newContext({viewport:{width:390,height:844},reducedMotion:'reduce',hasTouch:true,isMobile:true});const page=await context.newPage(),errors=[],api=[];
 page.on('pageerror',e=>errors.push(e.message));await context.route('**/*',r=>{const u=new URL(r.request().url());if(u.origin!==base)return r.abort();if(u.pathname.startsWith('/api/')){api.push(u.pathname);return r.abort();}return r.continue();});
-await page.goto(base+'/rocket.html');await page.locator('#fire').waitFor();
+await page.goto(base+'/rocket.html');await page.locator('#rocket-menu').waitFor();assert.equal(await page.locator('#stage-list button:not(:disabled)').count(),1);await page.locator('#stage-list [data-stage="1"]').click();await page.locator('#fire').waitFor();
 assert.equal(await page.locator('#left,#right,#grid,#lives').count(),0);
 assert.equal(await page.locator('#stars circle').count(),100);
 assert.deepEqual(await page.locator('#labels text').allTextContents(),['1','1','10','10','0','x','y']);
@@ -24,7 +24,7 @@ for(let i=0;i<solutions.length;i++){
  await page.locator('#fire').click();await page.locator('#next').waitFor();
  assert.equal(await page.locator('#status').textContent(),i===3?'ALL CLEAR':'STAGE CLEAR');assert.equal(await page.locator('#targets [data-target]').count(),0);await page.locator('#next').click();
 }
-assert.equal(await page.locator('#stage').textContent(),'01');
+await page.locator('#rocket-menu').waitFor();assert.equal(await page.locator('#stage-list button:not(:disabled)').count(),4);await page.reload();await page.locator('#rocket-menu').waitFor();assert.equal(await page.locator('#progress-status').textContent(),'4 / 4');await page.locator('#stage-list [data-stage="3"]').click();assert.equal(await page.locator('#stage').textContent(),'03');await page.locator('#reset').click();await page.locator('#rocket-menu').waitFor();
 for(const width of [320,390,1280]){await page.setViewportSize({width,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));}
 assert.deepEqual(api,[]);assert.deepEqual(errors,[]);console.log(engine.name()+': GRAPH ROCKET browser checks passed');await context.close();
 }finally{await browser.close();}}}finally{server.closeAllConnections();await new Promise(r=>server.close(r));}})().catch(e=>{console.error(e);process.exitCode=1;});

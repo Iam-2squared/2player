@@ -67,6 +67,8 @@ test('lobby presents no stake controls before a verified opponent exists',()=>{
  assert(hub.includes('id="soccer-button"')&&hub.includes('href="/?game=2player"'));
  assert(hub.includes('id="solo-button"')&&hub.includes('href="/solo.html"'));
  assert(hub.includes('id="rocket-button"')&&hub.includes('href="/rocket.html"'));
+ assert(hub.includes('id="sky-button"')&&hub.includes('href="/sky.html"'));
+ assert(hub.indexOf('id="rocket-button"')<hub.indexOf('id="sky-button"'));
  assert(hub.indexOf('id="soccer-button"')<hub.indexOf('id="solo-button"'));
  assert(!hub.includes('online-users')&&!hub.includes('ranking-users'));
  assert(lobby.includes('aria-label="サッカーランキング">'));

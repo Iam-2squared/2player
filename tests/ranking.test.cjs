@@ -62,7 +62,14 @@ test('lobby presents no stake controls before a verified opponent exists',()=>{
  const js=fs.readFileSync(require.resolve('../public/app.js'),'utf8');
  const lobby=html.split('<section id="lobby-view"')[1].split('<section id="room-view"')[0];
  assert(!/lobby-stake|賭け額|type="number"/.test(lobby));
- assert(lobby.includes('id="solo-button"') && lobby.includes('href="/solo.html"'));
+ assert(!lobby.includes('id="solo-button"'));
+ const hub=html.split('<section id="hub-view"')[1].split('<section id="lobby-view"')[0];
+ assert(hub.includes('id="soccer-button"')&&hub.includes('href="/?game=2player"'));
+ assert(hub.includes('id="solo-button"')&&hub.includes('href="/solo.html"'));
+ assert(hub.includes('id="rocket-button"')&&hub.includes('href="/rocket.html"'));
+ assert(hub.indexOf('id="soccer-button"')<hub.indexOf('id="solo-button"'));
+ assert(!hub.includes('online-users')&&!hub.includes('ranking-users'));
+ assert(lobby.includes('aria-label="サッカーランキング" hidden'));
  assert(!lobby.includes('id="random-button"')&&!lobby.includes('id="queue-wait"'));
  assert(lobby.includes('id="online-users"'));
  assert(lobby.includes('id="ranking-users"'));

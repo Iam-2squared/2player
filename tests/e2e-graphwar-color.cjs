@@ -5,6 +5,7 @@ try{for(const engine of [chromium,webkit]){const browser=await engine.launch();t
 const actors=[{memberId:'11111111-1111-4111-8111-111111111111',name:'A'},{memberId:'22222222-2222-4222-8222-222222222222',name:'B'}],errors=[];
 for(let i=0;i<2;i++)await contexts[i].route('**/*',async route=>{const u=new URL(route.request().url());if(u.origin!==base)return route.abort();
 if(u.pathname.startsWith('/api/war/')){const action=u.pathname.split('/').at(-1);try{state=W.mutate(state,action,actors[i],route.request().postDataJSON(),Date.now(),rng);return route.fulfill({json:W.dto(state,actors[i],Date.now())});}catch(e){return route.fulfill({status:409,json:{ok:false,message:e.message}});}}
+if(u.pathname==='/api/session')return route.fulfill({json:{ok:true,user:null,wallet:null}});
 if(u.pathname==='/api/color/ranking')return route.fulfill({json:{ok:true,ranking:submission?[{rank:1,name:'A',time_ms:6500,isYou:true}]:[]}});
 if(u.pathname==='/api/color/start')return route.fulfill({json:{ok:true,seed:123,token:'synthetic'}});
 if(u.pathname==='/api/color/finish'){const data=route.request().postDataJSON();assert.equal(data.token,'synthetic');assert.ok(C.replay(123,data.answers)!==null);submission++;return route.fulfill({json:{ok:true,time_ms:6500,ranking:[{rank:1,name:'A',time_ms:6500,isYou:true}]}});}

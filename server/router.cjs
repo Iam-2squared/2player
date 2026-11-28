@@ -5,6 +5,7 @@ const {HttpError} = require('./errors.cjs');
 const {securityHeaders, readJson, sendJson} = require('./http.cjs');
 const identity = require('./identity.cjs');
 const store = require('./store.cjs');
+const solo=require('./solo-ranking.cjs');
 const {requestFailure} = require('./diagnostics.cjs');
 const {requestConfig} = require('./deadline.cjs');
 const MAX_ROUND = 2147483647; // PostgreSQL integer storage limit, not a game-ending turn cap.
@@ -225,7 +226,7 @@ function requestUrl(req) {
   if (routes.length && metadata !== undefined && routes[0] !== metadata) throw invalid();
   const route = routes[0] ?? metadata;
   if (route !== undefined) {
-    if (!/^(?:session|login|logout|rooms|rooms\/join|match|offer|ready|formation|input|cancel|ranking|watch(?:\/games|\/leave)?|social\/(?:feed|stamp)|lobby(?:\/(?:heartbeat|leave))?|challenge(?:\/(?:accept|decline|cancel))?|queue(?:\/cancel)?)$/.test(route)) throw invalid();
+    if (!/^(?:session|login|logout|rooms|rooms\/join|match|offer|ready|formation|input|cancel|ranking|solo\\/(?:ranking|start|finish)|watch(?:\/games|\/leave)?|social\/(?:feed|stamp)|lobby(?:\/(?:heartbeat|leave))?|challenge(?:\/(?:accept|decline|cancel))?|queue(?:\/cancel)?)$/.test(route)) throw invalid();
     const pathname = '/api/' + route;
     if (!['/api/index', '/api/index.js', pathname].includes(url.pathname)) throw invalid();
     url.pathname = pathname;
@@ -246,6 +247,7 @@ function createHandler(overrides = {}) {
   const rpc = overrides.rpc || store.rpc;
   const lobbyRpc = overrides.lobbyRpc || store.lobbyRpc;
   const rankingRpc = overrides.rankingRpc || store.rankingRpc;
+  const soloRpc=overrides.soloRpc||store.soloRpc;
   const socialRpc = overrides.socialRpc || store.socialRpc;
   const simulate = overrides.simulate || ((state, inputs, formations) => require('../public/physics.js').simulate(state, inputs, formations));
   async function processResult(result, member, config) {
@@ -282,7 +284,7 @@ function createHandler(overrides = {}) {
       diagnosticContext.queryKeyCount = url.searchParams.size;
       diagnosticContext.otherQueryCount = url.searchParams.size - captures.length;
       const routes = {'/api/session': ['GET'], '/api/login': ['POST'], '/api/logout': ['POST'], '/api/rooms': ['GET', 'POST'],
-        '/api/rooms/join': ['POST'], '/api/match': ['GET'], '/api/ranking': ['GET'], '/api/watch/games': ['GET'], '/api/watch': ['GET'], '/api/watch/leave': ['POST'], '/api/social/feed': ['GET'], '/api/social/stamp': ['POST'], '/api/offer': ['POST'], '/api/ready': ['POST'], '/api/formation': ['POST'], '/api/input': ['POST'], '/api/cancel': ['POST'],
+        '/api/rooms/join': ['POST'], '/api/match': ['GET'], '/api/ranking': ['GET'], '/api/solo/ranking':['GET'], '/api/solo/start':['POST'], '/api/solo/finish':['POST'], '/api/watch/games': ['GET'], '/api/watch': ['GET'], '/api/watch/leave': ['POST'], '/api/social/feed': ['GET'], '/api/social/stamp': ['POST'], '/api/offer': ['POST'], '/api/ready': ['POST'], '/api/formation': ['POST'], '/api/input': ['POST'], '/api/cancel': ['POST'],
         '/api/lobby': ['GET'], '/api/lobby/heartbeat': ['POST'], '/api/lobby/leave': ['POST'], '/api/challenge': ['POST'],
         '/api/challenge/accept': ['POST'], '/api/challenge/decline': ['POST'], '/api/challenge/cancel': ['POST'], '/api/queue': ['POST'], '/api/queue/cancel': ['POST']};
       const allowed = routes[url.pathname];
@@ -372,6 +374,14 @@ function createHandler(overrides = {}) {
         if(!uuid(body.matchId))throw invalid();
         await socialRpc('leave',{...actor,matchId:body.matchId},config);
         return sendJson(res,200,{ok:true});
+      }
+      if(url.pathname.startsWith('/api/solo/')){
+        if(url.search)throw invalid();
+        if(url.pathname==='/api/solo/ranking')return sendJson(res,200,solo.dto(await soloRpc('list',actor,config)));
+        const body=await readJson(req);
+        if(url.pathname==='/api/solo/start'){exact(body,[]);return sendJson(res,200,{ok:true,...solo.issue(member.id,config.rpcSecret)});}
+        const score=solo.verify(member.id,config.rpcSecret,body);
+        return sendJson(res,200,{...solo.dto(await soloRpc('submit',{...actor,score},config)),score});
       }
       if (url.pathname === '/api/ranking') {
         if (url.search) throw invalid();

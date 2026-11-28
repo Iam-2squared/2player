@@ -1,13 +1,12 @@
 <!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#111f34"><title>GRAPH ROCKET | KUSO Game</title><link rel="stylesheet" href="/rocket.css"><script src="/rocket-rules.js" defer></script><script src="/rocket.js" defer></script></head>
 <body><main><header><a href="/" aria-label="ゲーム一覧に戻る">‹</a><h1>GRAPH ROCKET</h1><button id="reset" aria-label="リセット">↻</button></header>
-<div class="stats"><strong id="stage">01</strong><span id="lives" aria-label="残りライフ">♥♥♥</span><span id="ammo" aria-label="残り発射回数">5</span></div>
+<div class="stats"><strong id="stage">01</strong><span id="ammo" aria-label="残り発射回数">1</span></div>
 <svg id="field" viewBox="0 0 440 440" role="img" aria-label="第一象限の座標平面と宇宙基地">
 <defs>
  <linearGradient id="space" x2=".7" y2="1"><stop stop-color="#050b19"/><stop offset="1" stop-color="#142a43"/></linearGradient>
  <radialGradient id="nebula"><stop stop-color="#376394" stop-opacity=".38"/><stop offset="1" stop-color="#18304d" stop-opacity="0"/></radialGradient>
  <linearGradient id="planet" x2="1" y2="1"><stop stop-color="#577d9b"/><stop offset=".58" stop-color="#243e60"/><stop offset="1" stop-color="#0b1729"/></linearGradient>
- <pattern id="grid" x="40" y="40" width="36" height="36" patternUnits="userSpaceOnUse"><path d="M36 0H0V36" fill="none" stroke="#7196b5" stroke-opacity=".24" stroke-width=".7"/></pattern>
  <filter id="glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="3"/></filter>
  <clipPath id="graph-clip"><rect x="40" y="40" width="360" height="360"/></clipPath>
 </defs>
@@ -15,8 +14,6 @@
 <ellipse cx="310" cy="105" rx="230" ry="150" fill="url(#nebula)" transform="rotate(-28 310 105)"/>
 <g id="stars" aria-hidden="true"></g>
 <g opacity=".65"><circle cx="350" cy="91" r="55" fill="url(#planet)"/><ellipse cx="350" cy="91" rx="80" ry="16" transform="rotate(-25 350 91)" fill="none" stroke="#7795ac" stroke-width="2" opacity=".48"/><path d="M310 55Q351 47 389 76" stroke="#a1b6c9" stroke-width="1" fill="none" opacity=".5"/></g>
-<rect x="40" y="40" width="360" height="360" fill="url(#grid)"/>
-<rect x="40" y="40" width="360" height="360" fill="none" stroke="#47647e" stroke-opacity=".4"/>
 <g id="axes" stroke="#b7d3e4" stroke-width="1.4" fill="none"><path d="M40 400H409l-5 -3m5 3l-5 3M40 400V31l-3 5m3 -5l3 5"/></g>
 <g id="base-bg" transform="translate(40 400)" aria-hidden="true">
  <ellipse rx="28" ry="21" fill="#1f546e" opacity=".7" filter="url(#glow)"/>
@@ -35,6 +32,6 @@
 <g id="ship" transform="translate(40 400) rotate(45)"><path d="M0 -15Q9 -6 5 7H-5Q-9 -6 0 -15Z" fill="#f4f8ff" stroke="#a4c2d3" stroke-width=".8"/><path d="M-5 2L-9 9L-4 7M5 2L9 9L4 7" fill="#7baac4"/><circle cy="-4" r="3" fill="#62c4db"/><path d="M-3 9L0 18L3 9" fill="#ffbd71"/></g>
 </svg>
 <form id="fire-form"><label for="equation">y =</label><input id="equation" value="x" maxlength="120" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="ロケットの軌道を表す数式"><button id="fire" type="submit">FIRE</button></form>
-<div id="symbols" aria-label="数式入力補助"><button data-symbol="x" type="button">x</button><button data-symbol="^2" type="button">²</button><button data-symbol="(" type="button">(</button><button data-symbol=")" type="button">)</button><button data-symbol="/" type="button">÷</button><button data-symbol="*" type="button">×</button><button data-symbol="sin(" type="button">sin</button><button data-symbol="cos(" type="button">cos</button></div>
+<div id="symbols" aria-label="数式入力補助"><button data-symbol="x" type="button">x</button><button data-symbol="^2" type="button">²</button><button data-symbol="^3" type="button">³</button><button data-symbol="^4" type="button">⁴</button><button data-symbol="(" type="button">(</button><button data-symbol=")" type="button">)</button><button data-symbol="/" type="button">÷</button><button data-symbol="*" type="button">×</button><button data-symbol="sin(" type="button">sin</button><button data-symbol="cos(" type="button">cos</button></div>
 <p id="status" role="status"></p><button id="next" hidden>次のステージ</button>
-<details><summary>遊び方</summary><p>原点を通る数式を入力して発射。軌道上の拠点と飛来物を破壊しよう。発射するたび飛来物が原点に近づく。全滅させればクリア。</p><p>例：x、2x、x^2/4、sqrt(x)。三角関数はラジアン。</p></details></main></body></html>
+<details><summary>遊び方</summary><p>原点を通る数式を入力し、1回の発射ですべての拠点・飛来物に命中させよう。失敗したら同じステージに再挑戦。</p><p>例：x²/4、x³/8、x⁴/16。三角関数はラジアン。</p></details></main></body></html>

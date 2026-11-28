@@ -6,7 +6,7 @@ const own=(o,k)=>Object.prototype.hasOwnProperty.call(o,k);
 const fail=()=>{throw new Error('数式を確認してください。');};
 function compile(raw){
  if(typeof raw!=='string'||raw.length>120)fail();
- const source=raw.normalize('NFKC').toLowerCase().replace(/^\s*y\s*=\s*/,'').replace(/−/g,'-').replace(/[×·]/g,'*').replace(/÷/g,'/').replace(/π/g,'pi').replace(/²/g,'^2').replace(/³/g,'^3');
+ const source=raw.replace(/²/g,'^2').replace(/³/g,'^3').normalize('NFKC').toLowerCase().replace(/^\s*y\s*=\s*/,'').replace(/−/g,'-').replace(/[×·]/g,'*').replace(/÷/g,'/').replace(/π/g,'pi').replace(/²/g,'^2').replace(/³/g,'^3');
  let tokens=[],i=0;
  while(i<source.length){if(/\s/.test(source[i])){i++;continue;}const m=source.slice(i).match(/^(?:\d+(?:\.\d*)?|\.\d+|sin|cos|tan|sqrt|abs|exp|log|pi|x|e|[+\-*/^()])/);if(!m)fail();tokens.push(m[0]);i+=m[0].length;if(tokens.length>100)fail();}
  const input=[];for(const t of tokens){const last=input.at(-1);if(last&&(/^(?:\d|\.)/.test(last)||['x','pi','e',')'].includes(last))&&(/^(?:\d|\.)/.test(t)||['x','pi','e','('].includes(t)||own(functions,t))){if(/^(?:\d|\.)/.test(last)&&/^(?:\d|\.)/.test(t))fail();input.push('*');}input.push(t);}
@@ -29,7 +29,7 @@ const STAGES=[
  {bases:[{x:3,y:6},{x:-7,y:2},{x:7,y:-3}],incoming:[{x:8,y:4,vx:-1.2,vy:-.6},{x:-8,y:-4,vx:1.2,vy:.6}],shots:8}
 ];
 function stage(index){const s=STAGES[index%STAGES.length];return {bases:s.bases.map((b,i)=>({...b,id:'b'+i,kind:'base'})),incoming:s.incoming.map((b,i)=>({...b,id:'m'+i,kind:'meteor'})),shots:s.shots};}
-function trajectory(f,direction){if(![1,-1].includes(direction))fail();const y=f(0);if(!Number.isFinite(y)||Math.abs(y)>1e-7)throw new Error('原点 (0, 0) を通る数式にしてください。');const points=[{x:0,y:0}];for(let i=1;i<=500;i++){const x=direction*i*.02,y=f(x);if(!Number.isFinite(y)||Math.abs(y)>12||Math.abs(y-points.at(-1).y)>1.5)break;points.push({x,y});}return points;}
+function trajectory(f,direction){if(![1,-1].includes(direction))fail();const y=f(0);if(!Number.isFinite(y)||Math.abs(y)>1e-7)throw new Error('原点 (0, 0) を通る数式にしてください。');const points=[{x:0,y:0}];for(let i=1;i<=500;i++){const x=direction*i*.02,y=f(x);if(!Number.isFinite(y)||Math.abs(y)>10||Math.abs(y-points.at(-1).y)>1.5)break;points.push({x,y});}return points;}
 function impact(points,targets){const hits=[];for(let i=1;i<points.length;i++){const p=points[i],a=points[i-1],dx=p.x-a.x,dy=p.y-a.y,den=dx*dx+dy*dy;for(const t of targets){if(hits.some(h=>h.id===t.id))continue;const k=den?Math.max(0,Math.min(1,((t.x-a.x)*dx+(t.y-a.y)*dy)/den)):0;if(Math.hypot(t.x-a.x-k*dx,t.y-a.y-k*dy)<=.46)hits.push({id:t.id,at:i});}}return hits;}
 function advance(incoming){const survivors=[];let damage=0;for(const m of incoming){const x=m.x+m.vx,y=m.y+m.vy;if(Math.hypot(x,y)<1||Math.hypot(x,y)>Math.hypot(m.x,m.y)){damage++;}else survivors.push({...m,x,y});}return {survivors,damage};}
 return {compile,stage,trajectory,impact,advance,stageCount:STAGES.length};

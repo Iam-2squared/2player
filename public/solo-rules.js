@@ -38,5 +38,6 @@
   const points=type==='ten'?100*path.length:1000*path.length*(path.length-1);
   return {...playable,points,type};
  }
- return {SIZE,COUNT,adjacent,validBoard,total,extend,moveType,findMove,newBoard,apply};
+ function seeded(seed){let state=seed>>>0;return ()=>{state=(Math.imul(1664525,state)+1013904223)>>>0;return state/4294967296;};}
+ return {SIZE,COUNT,adjacent,validBoard,total,extend,moveType,findMove,newBoard,apply,seeded};
 });

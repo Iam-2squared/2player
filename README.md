@@ -21,7 +21,7 @@ legacy random queue endpoint returns 410; old cancellation remains available
 for cleanup. Direct invitations and the existing soccer flow are unchanged.
 The standalone TEN LINK puzzle uses a 5×5 number board, 60-second rounds,
 vertical/horizontal/diagonal paths totaling ten and gold links for bonus
-points. Its best score stays in the browser; it never calls a wallet API.
+points. Logged-in users receive a server-signed seed; the server replays submitted moves and stores one best score per KGS account in the separate Target solo ranking. Offline or unauthenticated games remain local practice. No wallet API is used. Existing local scores are not imported.
 
 During matches, players can send one of eight preset short text stamps (including the three newest options) to the court center. The fixed-code messages are also visible to spectators. Five-second cooldown and short-lived storage remain in effect. No sticker images are loaded for these messages.
 

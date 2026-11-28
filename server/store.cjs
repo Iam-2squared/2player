@@ -19,7 +19,7 @@ function unpack(result) {
 }
 async function callRpc(functionName, action, input, config, timeoutMs = 12000) {
   // The function name is selected only by the two fixed server wrappers below.
-  if (!['two_player_rpc', 'two_player_lobby_rpc', 'two_player_ranking_rpc', 'two_player_social_rpc'].includes(functionName)) throw unavailable();
+  if (!['two_player_rpc', 'two_player_lobby_rpc', 'two_player_ranking_rpc', 'two_player_social_rpc', 'two_player_solo_ranking_rpc'].includes(functionName)) throw unavailable();
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 12000) throw unavailable();
   const started = performance.now();
   const operation = (functionName === 'two_player_lobby_rpc' ? 'lobby.' : functionName === 'two_player_ranking_rpc' ? 'ranking.' : functionName === 'two_player_social_rpc' ? 'social.' : 'soccer.') + action;
@@ -64,5 +64,6 @@ async function lobbyRpc(action, input = {}, config = getConfig(), {timeoutMs = 1
 }
 async function rankingRpc(action, input = {}, config = getConfig()) { return callRpc('two_player_ranking_rpc', action, input, config); }
 async function socialRpc(action, input = {}, config = getConfig()) { return callRpc('two_player_social_rpc', action, input, config); }
+async function soloRpc(action,input={},config=getConfig()){return callRpc('two_player_solo_ranking_rpc',action,input,config);}
 async function closeStore() { const previous = pool; pool = undefined; if (previous) await previous.end(); }
-module.exports = {rpc, lobbyRpc, rankingRpc, socialRpc, unpack, closeStore};
+module.exports = {rpc, lobbyRpc, rankingRpc, socialRpc, soloRpc, unpack, closeStore};

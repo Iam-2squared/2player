@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#142a39">
-  <title>2player | KGS 11th</title>
+  <title>KUSO Game | KGS 11th</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="/" aria-label="2player ホーム"><span class="brand-mark" aria-hidden="true"><i></i><i></i></span><span>2player<span class="brand-dot">.</span></span></a>
+    <a class="brand" href="/" aria-label="KUSO Game ホーム"><span>KUSO Game<span class="brand-dot">.</span></span></a>
     <a class="back-link" href="https://kgs01-git-codex-kgs01-shared-release-iam-2squareds-projects.vercel.app">KGS 11th ↗</a>
     <div class="account" id="account" hidden><span id="account-name"></span><strong><span id="wallet-balance">0</span> <small>轟</small></strong><button class="icon-button" id="logout-button" type="button" aria-label="ログアウト" title="ログアウト">↪</button></div>
   </header>
@@ -21,13 +21,20 @@
     <section class="login-view" id="login-view" hidden>
       <form class="panel login-card" id="login-form"><div class="login-fields"><label for="attendance">出席番号<select id="attendance" name="attendanceNo" autocomplete="username" required><option value="">選択</option></select></label><label for="pin">PIN<input id="pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="current-password" placeholder="••••" required></label></div><p class="field-error" id="login-error" role="alert" hidden></p><button class="button primary full" id="login-submit" type="submit">ログイン</button></form>
     </section>
+    <section id="hub-view" class="hub-view" hidden aria-label="ゲーム一覧">
+      <div class="game-grid">
+        <a class="game-tile soccer-tile" id="soccer-button" href="/?game=2player"><svg viewBox="0 0 160 124" aria-hidden="true"><rect x="27" y="8" width="106" height="104" rx="8" fill="#5da565" stroke="#bce2b8" stroke-width="2"/><path d="M27 60H133M63 8V24H97V8M63 112V96H97V112" fill="none" stroke="#d6edce" stroke-width="2"/><circle cx="80" cy="60" r="15" fill="none" stroke="#d6edce" stroke-width="2"/><g fill="#e76a63" stroke="#293b37" stroke-width="2"><circle cx="53" cy="30" r="10"/><circle cx="101" cy="37" r="10"/><circle cx="72" cy="16" r="8"/></g><g fill="#72c6e1" stroke="#293b37" stroke-width="2"><circle cx="54" cy="88" r="10"/><circle cx="106" cy="83" r="10"/><circle cx="80" cy="105" r="8"/></g><circle cx="82" cy="59" r="6" fill="#fff" stroke="#293b37" stroke-width="1.5"/></svg><strong>2player</strong></a>
+        <a class="game-tile ten-tile" id="solo-button" href="/solo.html"><svg viewBox="0 0 160 124" aria-hidden="true"><g stroke="#49616a" stroke-width="2"><path d="M36 22H124M36 62H124M36 102H124M36 22V102M80 22V102M124 22V102M36 22L124 102M124 22L36 102M36 62L80 22L124 62L80 102Z" fill="none"/></g><path d="M36 22L80 62L80 102" fill="none" stroke="#e4f5f5" stroke-width="13" stroke-linecap="round"/><g stroke="#263740" stroke-width="2"><circle cx="36" cy="22" r="17" fill="#bd8233"/><circle cx="80" cy="22" r="17" fill="#407fb8"/><circle cx="124" cy="22" r="17" fill="#cf645d"/><circle cx="36" cy="62" r="17" fill="#3b9877"/><circle cx="80" cy="62" r="17" fill="#677e96"/><circle cx="124" cy="62" r="17" fill="#b8953e"/><circle cx="36" cy="102" r="17" fill="#407fb8"/><circle cx="80" cy="102" r="17" fill="#cf645d"/><circle cx="124" cy="102" r="17" fill="#b8953e"/></g><g fill="#fff" font-size="16" font-weight="800" text-anchor="middle" dominant-baseline="central"><text x="36" y="22">1</text><text x="80" y="22">3</text><text x="124" y="22">4</text><text x="36" y="62">2</text><text x="80" y="62">5</text><text x="124" y="62">10</text><text x="36" y="102">3</text><text x="80" y="102">4</text><text x="124" y="102">10</text></g></svg><strong>TEN LINK</strong></a>
+        <a class="game-tile rocket-tile" id="rocket-button" href="/rocket.html"><svg viewBox="0 0 160 124" aria-hidden="true"><g stroke="#334b65" stroke-width="1"><path d="M14 20H146M14 40H146M14 60H146M14 80H146M14 100H146M20 10V114M40 10V114M60 10V114M80 10V114M100 10V114M120 10V114M140 10V114"/></g><path d="M14 80H146M40 114V10" stroke="#91abc7" fill="none"/><path d="M40 80Q83 79 126 24" stroke="#7de9e2" stroke-width="3" stroke-dasharray="5 3" fill="none"/><g transform="translate(40 80) rotate(50)"><path d="M0 -15Q8 -6 5 7L-5 7Q-8 -6 0 -15Z" fill="#f5f8ff"/><circle cy="-4" r="2.5" fill="#6bc3db"/><path d="M-3 9L0 18L3 9" fill="#ffbc6b"/></g><g transform="translate(126 24)" stroke="#ff857f" fill="#754353" stroke-width="2"><path d="M-10 7V-7L0 -13L10 -7V7Z"/><path d="M-4 7V0H4V7"/></g><circle cx="100" cy="65" r="7" fill="#e0a77c"/><path d="M107 61L119 54" stroke="#e0a77c" stroke-width="3"/></svg><strong>GRAPH ROCKET</strong></a>
+      </div>
+    </section>
     <section id="lobby-view" class="lobby-view" hidden>
-      <div class="panel matchmaking-settings"><a class="button primary full" id="solo-button" href="/solo.html">ソロゲーム</a></div>
+      <div class="soccer-top"><a href="/" aria-label="ゲーム一覧に戻る">‹</a><h1>2player</h1></div>
       <section class="online-panel" aria-label="ログイン中のユーザー"><div class="list-heading"><span>ログイン中 <small id="online-count">0</small></span><button class="text-button" id="refresh-lobby" type="button" aria-label="更新">↻</button></div>
         <div class="lobby-invitations" id="challenge-panel" aria-label="対戦の申込み" hidden><div id="incoming-challenges"></div><div id="outgoing-challenges"></div></div>
         <div id="online-users"></div><p class="small-status online-empty" id="online-empty">—</p></section>
-      <section class="watch-list-panel" aria-label="観戦できる試合"><div class="list-heading"><span>対戦中の試合を観戦</span></div><div id="live-games"></div><p class="small-status" id="live-games-empty">現在、観戦できる試合はありません。</p></section>
-      <section class="ranking-panel" aria-label="サッカーランキング"><div class="list-heading"><span>ランキング</span><span class="ranking-legend">勝利 +1勝 · 3–0/+3pt · 3–1/+2pt · 3–2/+1pt · 時間切れ勝ち/+1pt</span></div><div id="ranking-users"></div><p class="small-status ranking-empty" id="ranking-empty">勝利記録はまだありません</p></section>
+      <section class="watch-list-panel" aria-label="観戦できる試合" hidden><div class="list-heading"><span>対戦中の試合を観戦</span></div><div id="live-games"></div><p class="small-status" id="live-games-empty">現在、観戦できる試合はありません。</p></section>
+      <section class="ranking-panel" aria-label="サッカーランキング" hidden><div class="list-heading"><span>ランキング</span><span class="ranking-legend">勝利 +1勝 · 3–0/+3pt · 3–1/+2pt · 3–2/+1pt · 時間切れ勝ち/+1pt</span></div><div id="ranking-users"></div><p class="small-status ranking-empty" id="ranking-empty">勝利記録はまだありません</p></section>
     </section>
     <section id="room-view" class="room-view" hidden>
       <div class="room-top"><button class="text-button" id="leave-room" type="button">戻る</button></div>

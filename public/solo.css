@@ -2,3 +2,5 @@
 @media(max-height:680px){.intro{padding-top:0}.solo{padding-top:5px}.intro-copy{margin:8px 0}.rules{margin:8px 0 12px}.score-row{margin:4px 0}.sum{min-height:48px;margin-bottom:0}.timer{margin:12px 0 8px}}
 
 .ranking-panel{text-align:left;margin:26px 0 0;border-top:1px solid #455861;padding-top:20px}.ranking-panel h2{font-size:19px;margin:0 0 10px}.ranking-panel ol{list-style:none;margin:10px 0;padding:0;display:grid;gap:6px}.ranking-panel li{display:grid;grid-template-columns:32px 1fr auto;gap:8px;align-items:center;padding:10px 12px;border:1px solid #455861;border-radius:9px;font-size:14px}.ranking-panel li.self{border-color:#8ed4d9;background:#293a42}.ranking-panel li strong{overflow-wrap:anywhere}.ranking-panel li span:last-child{font-variant-numeric:tabular-nums}.ranking-panel button{width:100%}#rank-view{width:100%;margin:8px 0 12px}
+
+html,body{touch-action:pan-x pan-y;-webkit-text-size-adjust:100%;text-size-adjust:100%}button,a{touch-action:manipulation}

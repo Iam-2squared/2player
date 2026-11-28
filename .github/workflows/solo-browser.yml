@@ -7,6 +7,7 @@ on:
       - 'tests/e2e-rocket.cjs'
       - 'tests/e2e-sky.cjs'
       - 'tests/e2e-graphwar-color.cjs'
+      - 'tests/e2e-rooftop.cjs'
       - '.github/workflows/solo-browser.yml'
 permissions:
   contents: read
@@ -27,3 +28,4 @@ jobs:
       - run: node tests/e2e-rocket.cjs
       - run: node tests/e2e-sky.cjs
       - run: node tests/e2e-graphwar-color.cjs
+      - run: node tests/e2e-rooftop.cjs

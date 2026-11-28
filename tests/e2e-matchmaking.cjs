@@ -253,7 +253,7 @@ async function actualScenarios(browser) {
     };
     const responseFor = pathname => response => new URL(response.url()).pathname === pathname && response.status() === 200;
     try {
-      await page.goto(appBase);
+      await page.goto(appBase+'/?game=2player');
       await visible(page, '#login-view');
       await page.selectOption('#attendance', String(players[0].attendanceNumber));
       await page.fill('#pin', players[0].pin);
@@ -313,7 +313,7 @@ async function actualScenarios(browser) {
       await visible(page, '#back-lobby'); await page.click('#back-lobby'); await visible(page, '#lobby-view');
     };
     try {
-      await page.goto(appBase); await visible(page, '#login-view');
+      await page.goto(appBase+'/?game=2player'); await visible(page, '#login-view');
       await page.selectOption('#attendance', String(players[0].attendanceNumber)); await page.fill('#pin', players[0].pin);
       const heartbeat = page.waitForResponse(value => new URL(value.url()).pathname === paths.heartbeat && value.status() === 200);
       await page.click('#login-submit'); await heartbeat;
@@ -572,7 +572,7 @@ async function actualScenarios(browser) {
     try {
       await pulse(B);
       eq((await money(A)).balance, 6000000000); eq((await money(B)).balance, 6000000000);
-      await page.goto(appBase); await visible(page, '#login-view');
+      await page.goto(appBase+'/?game=2player'); await visible(page, '#login-view');
       await page.selectOption('#attendance', String(players[0].attendanceNumber)); await page.fill('#pin', players[0].pin);
       await clickReply('#login-submit', '/api/login');
       await visible(page, '[data-challenge-user="' + players[1].id + '"]');
@@ -667,7 +667,7 @@ async function actualScenarios(browser) {
         'Even after the amounts return, the retired approval request cannot renew consent');
       eq(await Promise.all([money(A), money(B)]), before);
 
-      await page.goto(appBase); await visible(page, '#login-view');
+      await page.goto(appBase+'/?game=2player'); await visible(page, '#login-view');
       await page.selectOption('#attendance', String(players[0].attendanceNumber)); await page.fill('#pin', players[0].pin);
       const loggedIn = page.waitForResponse(response => new URL(response.url()).pathname === '/api/login');
       await page.click('#login-submit'); eq((await loggedIn).status(), 200);
@@ -829,7 +829,12 @@ async function browserScenarios(origin) {
         });
         const page = await context.newPage(); page.on('pageerror', error => browserErrors.push({ browser: name, message: error.message }));
         await page.goto(origin, { waitUntil: 'networkidle' }); await visible(page, '#login-view');
-        await page.selectOption('#attendance', '1'); await page.fill('#pin', players[0].pin); await page.click('#login-submit'); await visible(page, '#lobby-view');
+        await page.selectOption('#attendance', '1'); await page.fill('#pin', players[0].pin); await page.click('#login-submit'); await visible(page, '#hub-view');
+        eq(await page.locator('.game-tile').count(),3,'Three games on the catalog');
+        ok(await page.locator('#lobby-view').isHidden(),'Catalog has no opponent list');
+        const tiles=await page.locator('.game-tile').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height};}));
+        ok(tiles.every(r=>Math.abs(r.w-r.h)<2)&&Math.abs(tiles[0].y-tiles[1].y)<2&&tiles[2].y>tiles[0].y,'Two square tiles per row');
+        await page.click('#soccer-button');await visible(page,'#lobby-view');
         for (const selector of ['#create-form', '#join-form', '#join-code', '#room-code', '#copy-invite']) eq(await page.locator(selector).count(), 0, 'No room-code UI: ' + selector);
         await visible(page, '[data-challenge-user="' + players[1].id + '"]');
         eq(await page.locator('[data-challenge-user]').count(), players.length - 1);
@@ -837,7 +842,7 @@ async function browserScenarios(origin) {
         eq(await page.locator('[id*="formation"]').count(), 0, 'Formation controls are absent');
         eq(await page.locator('#lobby-stake').count(), 0, 'Lobby has no wager input');
         eq(await page.locator('#stake').getAttribute('max'), null, 'Room stake has no fixed maximum');
-        eq(await page.locator('#ranking-users').count(),1,'Permanent standings appear on lobby');
+        ok(await page.locator('#ranking-users').isHidden(),'Soccer rankings not shown in focused lobby');
         await page.reload({waitUntil: 'networkidle'}); await visible(page, '#lobby-view');
         eq(await page.locator('#lobby-stake').count(),0,'Wager is still hidden after reload');
         await page.click('[data-challenge-user="' + players[1].id + '"]');
@@ -868,6 +873,7 @@ async function browserScenarios(origin) {
         sharedFormation(fixture.match);
         await page.click('#leave-room'); await visible(page, '#lobby-view');
         eq(await page.locator('#random-button').count(),0,'Random pairing is no longer exposed');
+        await page.locator('.soccer-top a').click();await visible(page,'#hub-view');
         await page.click('#solo-button'); await visible(page, '#start');
         await page.click('#start'); await visible(page, '#board');
         eq(await page.locator('#board .node').count(),25,'Solo has a five by five board');
@@ -877,7 +883,7 @@ async function browserScenarios(origin) {
         for(const i of puzzlePath.slice(1))await page.mouse.move(centers[i].x,centers[i].y,{steps:5});
         await page.mouse.up();await page.waitForFunction(()=>Number(document.querySelector('#score').textContent.replaceAll(',',''))>0);
         await page.click('#quit');await visible(page,'#result');
-        await page.click('#result a');await visible(page,'#lobby-view');
+        await page.click('#result a');await visible(page,'#hub-view');await page.click('#soccer-button');await visible(page,'#lobby-view');
         ok(!fixture.calls.some(item=>item.path===paths.queue),'The solo game never creates a random queue');
         const selectedInvite=fixture.addInvitation(100);await page.click('#refresh-lobby');
         await visible(page,'[data-accept-invitation="'+selectedInvite+'"]');await page.click('[data-accept-invitation="'+selectedInvite+'"]');

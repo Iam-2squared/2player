@@ -83,3 +83,6 @@
  .pitch-stamp strong{font-size:15px}
  .stamp-buttons button{font-size:10px;padding:8px}
 }
+
+/* Game catalog: fixed two-column square tiles, naturally extensible. */
+.hub-view{max-width:680px;margin:24px auto 40px}.game-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.game-tile{aspect-ratio:1;min-width:0;position:relative;border-radius:18px;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4%;padding:8%;color:#fff;box-shadow:0 2px 7px #142a3914}.game-tile svg{width:100%;max-height:74%;display:block}.game-tile strong{font-size:clamp(12px,4vw,24px);line-height:1.1;letter-spacing:-.035em;text-align:center;white-space:nowrap}.soccer-tile{background:#285548}.ten-tile{background:#172329}.rocket-tile{background:#172c44}.game-tile:active{transform:scale(.98)}.soccer-top{display:flex;align-items:center;gap:14px;margin:0 0 18px}.soccer-top a{font-size:32px;line-height:1;min-width:36px;min-height:40px;display:grid;place-items:center}.soccer-top h1{font-size:24px;margin:0;letter-spacing:-.04em}.site-header .brand{white-space:nowrap}.lobby-view .online-panel{margin-top:8px}.hub-view .game-grid a:focus-visible{outline-offset:3px}@media(max-width:650px){.hub-view{margin:18px auto 30px}.game-grid{gap:12px}.game-tile{border-radius:14px}.site-header .brand{font-size:clamp(16px,4.7vw,21px)}}

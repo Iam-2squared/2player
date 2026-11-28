@@ -16,16 +16,16 @@ function normalize(s,now,rng){
  if(s.queue.length&&!s.deadline)s.deadline=now+TURN;
  if(!s.queue.length)s.deadline=0;
 }
-function advance(s,actor,now,rng){s.queue=s.queue.filter(id=>id!==actor);if(s.players.some(p=>p.id===actor&&p.alive))s.queue.push(actor);for(const p of s.players)if(!p.alive)p.wait=p.wait.filter(id=>id!==actor);s.deadline=now+TURN;normalize(s,now,rng);}
+function advance(s,actor,now,rng,newDead=new Set()){s.queue=s.queue.filter(id=>id!==actor);if(s.players.some(p=>p.id===actor&&p.alive))s.queue.push(actor);for(const p of s.players)if(!p.alive&&!newDead.has(p.id))p.wait=p.wait.filter(id=>id!==actor);s.deadline=now+TURN;normalize(s,now,rng);}
 function mutate(original,action,actor,body,now=Date.now(),rng=Math.random){
  const s=structuredClone(original),oldTurn=s.queue[0];normalize(s,now,rng);if(oldTurn!==s.queue[0])s.deadline=s.queue.length?now+TURN:0;
- if(s.queue.length&&now>=s.deadline)advance(s,s.queue[0],now,rng);
+ if(s.queue.length&&now>=s.deadline){advance(s,s.queue[0],now,rng);s.serial++;}
  let p=s.players.find(p=>p.id===actor.memberId);
  if(action==='leave'){if(p){s.players=s.players.filter(q=>q!==p);s.queue=s.queue.filter(id=>id!==p.id);for(const q of s.players)q.wait=q.wait.filter(id=>id!==p.id);if(oldTurn===p.id)s.deadline=now+TURN;normalize(s,now,rng);}return s;}
  if(!p){if(action==='fire'||action==='pass')throw invalid('参加し直してください。');if(s.players.length>=41)throw new HttpError(409,'参加人数の上限です。','WAR_FULL');p={id:actor.memberId,name:actor.name,...spawn(s,rng),alive:true,seen:now,wait:[]};obstacle(s,p,rng);s.players.push(p);s.queue.push(p.id);if(s.queue.length===1)s.deadline=now+TURN;}
  else if(now-p.seen>=10000||action!=='poll'){p.seen=now;p.name=actor.name;}
  if(action==='fire'||action==='pass'){
-  if(!p.alive||s.queue[0]!==p.id||s.queue.length<2)throw new HttpError(409,'まだ自分の順番ではありません。','WAR_TURN');
+  if(!p.alive||s.queue[0]!==p.id||s.players.length<2)throw new HttpError(409,'まだ自分の順番ではありません。','WAR_TURN');
   if(body.serial!==s.serial)throw new HttpError(409,'ターンが更新されました。','WAR_TURN');
   if(action==='fire'){
    let lines;try{lines=M.paths(body.equation,[p.x,p.y],body.direction);}catch(e){throw invalid(e.message);}
@@ -34,8 +34,7 @@ function mutate(original,action,actor,body,now=Date.now(),rng=Math.random){
    const dead=new Set(result.killed),wait=s.players.filter(q=>q.alive&&!dead.has(q.id)).map(q=>q.id);
    for(const q of s.players)if(dead.has(q.id)){q.alive=false;q.wait=[...wait];}
    s.queue=s.queue.filter(id=>!dead.has(id));s.shot={serial:s.serial+1,by:p.id,paths:result.trails,at:now,killed:result.killed};
-   advance(s,p.id,now,rng); // shooter has just acted; a full next cycle is required
-   for(const q of s.players)if(dead.has(q.id)&&!q.alive&&!q.wait.includes(p.id))q.wait.push(p.id);
+   advance(s,p.id,now,rng,dead);
   }else advance(s,p.id,now,rng);
   s.serial++;
  }else if(s.queue.length===1&&s.players.length===1)s.deadline=now+TURN;

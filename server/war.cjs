@@ -7,7 +7,7 @@ function spawn(s,rng){
  for(let i=0;i<500;i++){const x=Math.round(45+rng()*(M.W-90)),y=Math.round(45+rng()*(M.H-90));if(s.players.every(p=>!p.alive||Math.hypot(x-p.x,y-p.y)>65)&&s.obstacles.every(o=>Math.hypot(x-o.x,y-o.y)>o.r+35))return {x,y};}
  throw new HttpError(409,'フィールドに空きがありません。','WAR_FULL');
 }
-function obstacle(s,p,rng){const others=s.players.filter(q=>q.id!==p.id&&q.alive);if(!others.length||s.obstacles.length>=128)return;const q=others[Math.floor(rng()*others.length)];for(let i=0;i<25;i++){const t=.25+rng()*.5,x=Math.round(p.x+(q.x-p.x)*t),y=Math.round(p.y+(q.y-p.y)*t),r=Math.round(24+rng()*48);if(x<r||x>M.W-r||y<r||y>M.H-r||s.players.some(v=>v.alive&&Math.hypot(x-v.x,y-v.y)<r+M.R+15)||s.obstacles.some(v=>Math.hypot(x-v.x,y-v.y)<r+v.r+10))continue;s.obstacles.push({id:crypto.randomUUID(),x,y,r});return;}}
+function obstacle(s,p,rng){const others=s.players.filter(q=>q.id!==p.id&&q.alive);if(!others.length||s.obstacles.length>=128)return;const q=others[Math.floor(rng()*others.length)];for(let i=0;i<25;i++){const t=.25+rng()*.5,x=Math.round(p.x+(q.x-p.x)*t),y=Math.round(p.y+(q.y-p.y)*t),r=Math.round(24+rng()*48);if(x<r||x>M.W-r||y<r||y>M.H-r||[...s.players,p].some(v=>v.alive&&Math.hypot(x-v.x,y-v.y)<r+M.R+15)||s.obstacles.some(v=>Math.hypot(x-v.x,y-v.y)<r+v.r+10))continue;s.obstacles.push({id:crypto.randomUUID(),x,y,r});return;}}
 function normalize(s,now,rng){
  const active=new Set(s.players.filter(p=>now-p.seen<TTL).map(p=>p.id));s.players=s.players.filter(p=>active.has(p.id));s.queue=s.queue.filter(id=>active.has(id)&&s.players.some(p=>p.id===id&&p.alive));
  for(const p of s.players)p.wait=p.wait.filter(id=>active.has(id));
@@ -19,10 +19,10 @@ function normalize(s,now,rng){
 function advance(s,actor,now,rng,newDead=new Set()){s.queue=s.queue.filter(id=>id!==actor);if(s.players.some(p=>p.id===actor&&p.alive))s.queue.push(actor);for(const p of s.players)if(!p.alive&&!newDead.has(p.id))p.wait=p.wait.filter(id=>id!==actor);s.deadline=now+TURN;normalize(s,now,rng);}
 function mutate(original,action,actor,body,now=Date.now(),rng=Math.random){
  const s=structuredClone(original),oldTurn=s.queue[0];normalize(s,now,rng);if(oldTurn!==s.queue[0])s.deadline=s.queue.length?now+TURN:0;
- if(s.queue.length&&now>=s.deadline){advance(s,s.queue[0],now,rng);s.serial++;}
+ if(s.players.length>1&&s.queue.length&&now>=s.deadline){advance(s,s.queue[0],now,rng);s.serial++;}
  let p=s.players.find(p=>p.id===actor.memberId);
  if(action==='leave'){if(p){s.players=s.players.filter(q=>q!==p);s.queue=s.queue.filter(id=>id!==p.id);for(const q of s.players)q.wait=q.wait.filter(id=>id!==p.id);if(oldTurn===p.id)s.deadline=now+TURN;normalize(s,now,rng);}return s;}
- if(!p){if(action==='fire'||action==='pass')throw invalid('参加し直してください。');if(s.players.length>=41)throw new HttpError(409,'参加人数の上限です。','WAR_FULL');p={id:actor.memberId,name:actor.name,...spawn(s,rng),alive:true,seen:now,wait:[]};obstacle(s,p,rng);s.players.push(p);s.queue.push(p.id);if(s.queue.length===1)s.deadline=now+TURN;}
+ if(!p){if(action==='fire'||action==='pass')throw invalid('参加し直してください。');if(s.players.length>=41)throw new HttpError(409,'参加人数の上限です。','WAR_FULL');p={id:actor.memberId,name:actor.name,...spawn(s,rng),alive:true,seen:now,wait:[]};obstacle(s,p,rng);s.players.push(p);s.queue.push(p.id);if(s.queue.length===1||s.players.length===2)s.deadline=now+TURN;}
  else if(now-p.seen>=10000||action!=='poll'){p.seen=now;p.name=actor.name;}
  if(action==='fire'||action==='pass'){
   if(!p.alive||s.queue[0]!==p.id||s.players.length<2)throw new HttpError(409,'まだ自分の順番ではありません。','WAR_TURN');
@@ -37,7 +37,7 @@ function mutate(original,action,actor,body,now=Date.now(),rng=Math.random){
    advance(s,p.id,now,rng,dead);
   }else advance(s,p.id,now,rng);
   s.serial++;
- }else if(s.queue.length===1&&s.players.length===1)s.deadline=now+TURN;
+ }
  return s;
 }
 function dto(s,actor,now){return {ok:true,world:{players:s.players.map(({id,name,x,y,alive})=>({id,name,x,y,alive})),obstacles:s.obstacles,turn:s.queue[0]||null,deadline:s.deadline,serverNow:now,serial:s.serial,shot:s.shot,you:actor.memberId}};}

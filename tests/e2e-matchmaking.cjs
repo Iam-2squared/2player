@@ -830,10 +830,10 @@ async function browserScenarios(origin) {
         const page = await context.newPage(); page.on('pageerror', error => browserErrors.push({ browser: name, message: error.message }));
         await page.goto(origin, { waitUntil: 'networkidle' }); await visible(page, '#login-view');
         await page.selectOption('#attendance', '1'); await page.fill('#pin', players[0].pin); await page.click('#login-submit'); await visible(page, '#hub-view');
-        eq(await page.locator('.game-tile').count(),6,'Six games on the catalog');
+        eq(await page.locator('.game-tile').count(),7,'Seven games on the catalog');
         ok(await page.locator('#lobby-view').isHidden(),'Catalog has no opponent list');
         const tiles=await page.locator('.game-tile').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height};}));
-        ok(tiles.every(r=>Math.abs(r.w-r.h)<2)&&Math.abs(tiles[0].y-tiles[1].y)<2&&tiles[2].y>tiles[0].y&&Math.abs(tiles[2].y-tiles[3].y)<2&&tiles[4].y>tiles[2].y&&Math.abs(tiles[4].y-tiles[5].y)<2,'Two square tiles per row');
+        ok(tiles.every(r=>Math.abs(r.w-r.h)<2)&&Math.abs(tiles[0].y-tiles[1].y)<2&&tiles[2].y>tiles[0].y&&Math.abs(tiles[2].y-tiles[3].y)<2&&tiles[4].y>tiles[2].y&&Math.abs(tiles[4].y-tiles[5].y)<2&&tiles[6].y>tiles[4].y,'Two square tiles per row');
         await page.click('#soccer-button');await visible(page,'#lobby-view');
         for (const selector of ['#create-form', '#join-form', '#join-code', '#room-code', '#copy-invite']) eq(await page.locator(selector).count(), 0, 'No room-code UI: ' + selector);
         await visible(page, '[data-challenge-user="' + players[1].id + '"]');

@@ -72,6 +72,7 @@ test('lobby presents no stake controls before a verified opponent exists',()=>{
  assert(hub.includes('id="war-button"')&&hub.includes('href="/war.html"'));
  assert(hub.includes('id="color-button"')&&hub.includes('href="/color.html"'));
  assert(hub.indexOf('id="war-button"')<hub.indexOf('id="color-button"'));
+ assert(hub.includes('id="rooftop-button"')&&hub.includes('href="/rooftop.html"'));
  assert(hub.indexOf('id="soccer-button"')<hub.indexOf('id="solo-button"'));
  assert(!hub.includes('online-users')&&!hub.includes('ranking-users'));
  assert(lobby.includes('aria-label="サッカーランキング">'));
@@ -84,4 +85,4 @@ test('lobby presents no stake controls before a verified opponent exists',()=>{
  assert(html.includes('id="stake"') && html.includes('対戦相手が決まりました'));
 });
 
-test('all game pages lock accidental zoom and the catalog uses the Japanese target title',()=>{for(const name of ['index','solo','rocket','sky','war','color']){const html=fs.readFileSync(require.resolve('../public/'+name+'.html'),'utf8');assert.match(html,/maximum-scale=1,\s*user-scalable=no/);assert.ok(html.includes('/zoom-lock.js'));if(name==='index'||name==='sky'){assert.ok(html.includes('射法投射'));assert.ok(!html.includes('SKY TARGET'));}}});
+test('all game pages lock accidental zoom and the catalog uses the Japanese target title',()=>{for(const name of ['index','solo','rocket','sky','war','color','rooftop']){const html=fs.readFileSync(require.resolve('../public/'+name+'.html'),'utf8');assert.match(html,/maximum-scale=1,\s*user-scalable=no/);assert.ok(html.includes('/zoom-lock.js'));if(name==='index'||name==='sky'){assert.ok(html.includes('射法投射'));assert.ok(!html.includes('SKY TARGET'));}}});

@@ -64,3 +64,7 @@ Graphwar auto-joins a shared 2000 × 1000 world with center axes, portrait horiz
 Color? is a 50-correct-answer time attack with randomized independent word and ink, three-second countdown, incorrect-answer shake and retry, and a separate fastest-time leaderboard. Ranked runs use signed question seeds and server-measured elapsed time; network overhead is included and automated input cannot be fully ruled out. Unauthenticated/offline runs are practice only. No wallet changes.
 
 Color? shows the next four words in a receding vertical queue. Correct answers advance the queue, wrong answers leave it unchanged, and FINISH moves into the foreground after question 50. The timer stops at the last correct answer; the finish animation does not delay submission.
+
+### ROOFTOP DUEL
+
+Named invitations in a separate lobby, landscape-only readiness, three-second countdown, best of three. Both players start in cover; peek in three directions and see all enemy lanes. Mirrored left/right and matching up are the only hit combinations. Server-accepted first hit wins the round; a 10-round magazine reloads automatically after 1.5 seconds, with a 120 ms minimum shot interval (actual cadence depends on latency). Brief recoil and colored shot traces indicate the lane. Hold FIRE or tap repeatedly. Match polling every 450 ms, lobby 1800 ms. Presence expiry 45 seconds; no stake, wallet, or existing ranking changes. Browser orientation is checked client-side, not a trusted competitive signal. No real-world weapon simulation.

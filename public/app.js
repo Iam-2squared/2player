@@ -8,7 +8,8 @@
   const MAX_WALLET_AMOUNT = 10000000000000;
   const validStake = value => Number.isSafeInteger(value) && value >= 100 && value <= MAX_WALLET_AMOUNT && value % 100 === 0;
   const COLORS = ['#f04d50', '#08b2d4'];
-  const VIEWS = ['boot', 'login', 'lobby', 'room', 'game', 'spectate'];
+  const VIEWS = ['boot', 'login', 'hub', 'lobby', 'room', 'game', 'spectate'];
+  const soccerSelected=()=>new URL(location.href).searchParams.get('game')==='2player';
   const STAMPS = Object.freeze(['おつw', 'うっまw', 'お願いします', 'あざした〜w', 'もう一戦しよ', 'うおw', '死ね🖕', '死ぬw']);
   const fmt = value => new Intl.NumberFormat('ja-JP').format(Number(value) || 0);
   const S = {
@@ -593,7 +594,8 @@
 
   function render() {
     const match = S.match;
-    const active = S.booting ? 'boot' : !S.user ? 'login' : S.watch ? 'spectate' : !match ? 'lobby' : match.status === 'waiting' ? 'room' : 'game';
+    if((match||S.watch)&&!soccerSelected()){const url=new URL(location.href);url.searchParams.set('game','2player');history.replaceState(null,'',url.pathname+url.search+url.hash);}
+    const active = S.booting ? 'boot' : !S.user ? 'login' : S.watch ? 'spectate' : !match ? (soccerSelected()?'lobby':'hub') : match.status === 'waiting' ? 'room' : 'game';
     for (const view of VIEWS) show(`${view}-view`, active === view);
     show('account', !!S.user && !S.booting);
     if (S.user) {
@@ -605,6 +607,7 @@
     $('retry-action').disabled = !!S.busy;
     const blocked = !!S.busy || !!S.pending;
     if (active === 'lobby') renderLobby(blocked);
+    if(active==='hub'&&S.lobby.queue&&!blocked)queueMicrotask(()=>{if(S.lobby.queue&&!S.busy&&!S.pending&&!S.match)void mutate('queue/cancel',{});});
     if (active === 'room') renderRoom(blocked);
     if (active === 'game') renderGame(blocked);
     if (active === 'spectate') renderSpectate();
@@ -1120,7 +1123,7 @@
     render();
   });
   $('notice-close').addEventListener('click', () => show('notice', false));
-  $('solo-button').addEventListener('click', event => { if (S.busy || S.pending || S.match) event.preventDefault(); });
+  for(const id of ['solo-button','rocket-button','soccer-button'])$(id).addEventListener('click',event=>{if(S.busy||S.pending||S.match)event.preventDefault();});
   $('offer-form').addEventListener('submit', event => { event.preventDefault(); if ($('offer-form').reportValidity() && S.match?.status === 'waiting') void mutate('offer', { matchId: S.match.id, stake: Number($('stake').value) }); });
   $('stake').addEventListener('input', () => { if (S.match?.status === 'waiting') renderRoom(!!S.busy || !!S.pending); });
   $('ready-button').addEventListener('click', () => {

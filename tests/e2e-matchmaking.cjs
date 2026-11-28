@@ -842,7 +842,10 @@ async function browserScenarios(origin) {
         eq(await page.locator('[id*="formation"]').count(), 0, 'Formation controls are absent');
         eq(await page.locator('#lobby-stake').count(), 0, 'Lobby has no wager input');
         eq(await page.locator('#stake').getAttribute('max'), null, 'Room stake has no fixed maximum');
-        ok(await page.locator('#ranking-users').isHidden(),'Soccer rankings not shown in focused lobby');
+        await visible(page,'#ranking-users .ranking-row');
+        eq(await page.locator('#ranking-users .ranking-self .ranking-wins').textContent(),'2勝');
+        eq(await page.locator('#ranking-users .ranking-self .ranking-points').textContent(),'5 pt');
+        ok(await page.locator('#ranking-users').isVisible(),'Soccer rankings shown only inside soccer lobby');
         await page.reload({waitUntil: 'networkidle'}); await visible(page, '#lobby-view');
         eq(await page.locator('#lobby-stake').count(),0,'Wager is still hidden after reload');
         await page.click('[data-challenge-user="' + players[1].id + '"]');

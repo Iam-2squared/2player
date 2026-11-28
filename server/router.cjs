@@ -226,7 +226,7 @@ function requestUrl(req) {
   if (routes.length && metadata !== undefined && routes[0] !== metadata) throw invalid();
   const route = routes[0] ?? metadata;
   if (route !== undefined) {
-    if (!/^(?:session|login|logout|rooms|rooms\/join|match|offer|ready|formation|input|cancel|ranking|solo\\/(?:ranking|start|finish)|watch(?:\/games|\/leave)?|social\/(?:feed|stamp)|lobby(?:\/(?:heartbeat|leave))?|challenge(?:\/(?:accept|decline|cancel))?|queue(?:\/cancel)?)$/.test(route)) throw invalid();
+    if (!/^(?:session|login|logout|rooms|rooms\/join|match|offer|ready|formation|input|cancel|ranking|solo\/(?:ranking|start|finish)|watch(?:\/games|\/leave)?|social\/(?:feed|stamp)|lobby(?:\/(?:heartbeat|leave))?|challenge(?:\/(?:accept|decline|cancel))?|queue(?:\/cancel)?)$/.test(route)) throw invalid();
     const pathname = '/api/' + route;
     if (!['/api/index', '/api/index.js', pathname].includes(url.pathname)) throw invalid();
     url.pathname = pathname;
@@ -378,7 +378,7 @@ function createHandler(overrides = {}) {
       if(url.pathname.startsWith('/api/solo/')){
         if(url.search)throw invalid();
         if(url.pathname==='/api/solo/ranking')return sendJson(res,200,solo.dto(await soloRpc('list',actor,config)));
-        const body=await readJson(req);
+        const body=await readJson(req,16384);
         if(url.pathname==='/api/solo/start'){exact(body,[]);return sendJson(res,200,{ok:true,...solo.issue(member.id,config.rpcSecret)});}
         const score=solo.verify(member.id,config.rpcSecret,body);
         return sendJson(res,200,{...solo.dto(await soloRpc('submit',{...actor,score},config)),score});

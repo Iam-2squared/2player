@@ -25,9 +25,9 @@ function draw(){
 }
 function view(next){state=next;$('intro').hidden=next!=='intro';$('count').hidden=next!=='count';$('result').hidden=next!=='result';$('hud').hidden=next!=='play';$('aim-zone').hidden=next!=='play';$('shoot').hidden=next!=='play';drag=null;}
 function start(){if(!land.matches)return;elapsed=0;spawned=0;score=0;lastShot=-Infinity;targets=[];pieces=[];flash=0;aim={x:W/2,y:H/2};$('count').textContent='3';view('count');}
-function shoot(){if(state!=='play'||!land.matches||document.hidden||!R.canFire(elapsed,lastShot))return;lastShot=elapsed;flash=.075;const hit=R.hit(targets,elapsed,aim.x,aim.y);if(hit){const [t]=targets.splice(hit.index,1);score+=hit.points;breakTarget(hit.p,t.gold);$('score').textContent=score;} }
+function shoot(){if(state!=='play'||!land.matches||document.hidden||!R.canFire(elapsed,lastShot))return;lastShot=elapsed;flash=.075;const covered=grass.getContext('2d').getImageData(Math.min(W-1,Math.floor(aim.x)),Math.min(H-1,Math.floor(aim.y)),1,1).data[3]>0;const hit=covered?null:R.hit(targets,elapsed,aim.x,aim.y);if(hit){const [t]=targets.splice(hit.index,1);score+=hit.points;breakTarget(hit.p,t.gold);$('score').textContent=score;} }
 function update(dt){
- if(state==='count'){elapsed+=dt;if(elapsed>=3){elapsed=0;view('play');$('score').textContent='0';$('time').textContent='60';}else $('count').textContent=Math.ceil(3-elapsed);}
+ if(state==='count'){elapsed+=dt;if(elapsed>=3){dt=elapsed-3;elapsed=0;view('play');$('score').textContent='0';$('time').textContent='60';}else $('count').textContent=Math.ceil(3-elapsed);}
  if(state==='play'){
   elapsed=Math.min(R.DURATION,elapsed+dt);while(spawned<R.DURATION&&spawned<=elapsed){targets.push(R.target(spawned));spawned++;}
   targets=targets.filter(t=>R.alive(R.position(t,elapsed)));for(const p of pieces)p.age+=dt;pieces=pieces.filter(p=>p.y+p.vy*p.age+R.G*p.age*p.age/2<H+40&&p.age<3);

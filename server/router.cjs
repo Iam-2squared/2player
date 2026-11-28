@@ -5,7 +5,7 @@ const {HttpError} = require('./errors.cjs');
 const {securityHeaders, readJson, sendJson} = require('./http.cjs');
 const identity = require('./identity.cjs');
 const store = require('./store.cjs');
-const solo=require('./solo-ranking.cjs'),sky=require('./sky-ranking.cjs');
+const solo=require('./solo-ranking.cjs'),sky=require('./sky-ranking.cjs'),color=require('./color-ranking.cjs'),war=require('./war.cjs');
 const {requestFailure} = require('./diagnostics.cjs');
 const {requestConfig} = require('./deadline.cjs');
 const MAX_ROUND = 2147483647; // PostgreSQL integer storage limit, not a game-ending turn cap.
@@ -226,7 +226,7 @@ function requestUrl(req) {
   if (routes.length && metadata !== undefined && routes[0] !== metadata) throw invalid();
   const route = routes[0] ?? metadata;
   if (route !== undefined) {
-    if (!/^(?:session|login|logout|rooms|rooms\/join|match|offer|ready|formation|input|cancel|ranking|(?:solo|sky)\/(?:ranking|start|finish)|watch(?:\/games|\/leave)?|social\/(?:feed|stamp)|lobby(?:\/(?:heartbeat|leave))?|challenge(?:\/(?:accept|decline|cancel))?|queue(?:\/cancel)?)$/.test(route)) throw invalid();
+    if (!/^(?:session|login|logout|rooms|rooms\/join|match|offer|ready|formation|input|cancel|ranking|(?:solo|sky|color)\/(?:ranking|start|finish)|war\/(?:poll|fire|pass|leave)|watch(?:\/games|\/leave)?|social\/(?:feed|stamp)|lobby(?:\/(?:heartbeat|leave))?|challenge(?:\/(?:accept|decline|cancel))?|queue(?:\/cancel)?)$/.test(route)) throw invalid();
     const pathname = '/api/' + route;
     if (!['/api/index', '/api/index.js', pathname].includes(url.pathname)) throw invalid();
     url.pathname = pathname;
@@ -249,6 +249,7 @@ function createHandler(overrides = {}) {
   const rankingRpc = overrides.rankingRpc || store.rankingRpc;
   const soloRpc=overrides.soloRpc||store.soloRpc;
   const skyRpc=overrides.skyRpc||store.skyRpc;
+  const colorRpc=overrides.colorRpc||store.colorRpc,warRpc=overrides.warRpc||store.warRpc;
   const socialRpc = overrides.socialRpc || store.socialRpc;
   const simulate = overrides.simulate || ((state, inputs, formations) => require('../public/physics.js').simulate(state, inputs, formations));
   async function processResult(result, member, config) {
@@ -285,7 +286,7 @@ function createHandler(overrides = {}) {
       diagnosticContext.queryKeyCount = url.searchParams.size;
       diagnosticContext.otherQueryCount = url.searchParams.size - captures.length;
       const routes = {'/api/session': ['GET'], '/api/login': ['POST'], '/api/logout': ['POST'], '/api/rooms': ['GET', 'POST'],
-        '/api/rooms/join': ['POST'], '/api/match': ['GET'], '/api/ranking': ['GET'], '/api/sky/ranking':['GET'], '/api/sky/start':['POST'], '/api/sky/finish':['POST'], '/api/solo/ranking':['GET'], '/api/solo/start':['POST'], '/api/solo/finish':['POST'], '/api/watch/games': ['GET'], '/api/watch': ['GET'], '/api/watch/leave': ['POST'], '/api/social/feed': ['GET'], '/api/social/stamp': ['POST'], '/api/offer': ['POST'], '/api/ready': ['POST'], '/api/formation': ['POST'], '/api/input': ['POST'], '/api/cancel': ['POST'],
+        '/api/rooms/join': ['POST'], '/api/match': ['GET'], '/api/ranking': ['GET'], '/api/war/poll':['POST'], '/api/war/fire':['POST'], '/api/war/pass':['POST'], '/api/war/leave':['POST'], '/api/color/ranking':['GET'], '/api/color/start':['POST'], '/api/color/finish':['POST'], '/api/sky/ranking':['GET'], '/api/sky/start':['POST'], '/api/sky/finish':['POST'], '/api/solo/ranking':['GET'], '/api/solo/start':['POST'], '/api/solo/finish':['POST'], '/api/watch/games': ['GET'], '/api/watch': ['GET'], '/api/watch/leave': ['POST'], '/api/social/feed': ['GET'], '/api/social/stamp': ['POST'], '/api/offer': ['POST'], '/api/ready': ['POST'], '/api/formation': ['POST'], '/api/input': ['POST'], '/api/cancel': ['POST'],
         '/api/lobby': ['GET'], '/api/lobby/heartbeat': ['POST'], '/api/lobby/leave': ['POST'], '/api/challenge': ['POST'],
         '/api/challenge/accept': ['POST'], '/api/challenge/decline': ['POST'], '/api/challenge/cancel': ['POST'], '/api/queue': ['POST'], '/api/queue/cancel': ['POST']};
       const allowed = routes[url.pathname];
@@ -375,6 +376,21 @@ function createHandler(overrides = {}) {
         if(!uuid(body.matchId))throw invalid();
         await socialRpc('leave',{...actor,matchId:body.matchId},config);
         return sendJson(res,200,{ok:true});
+      }
+      if(url.pathname.startsWith('/api/war/')){
+        if(url.search)throw invalid();const action=url.pathname.split('/').at(-1),body=await readJson(req,2048);
+        exact(body,action==='fire'?['serial','equation','direction']:action==='pass'?['serial']:[]);
+        if((action==='fire'||action==='pass')&&!integer(body.serial,0,Number.MAX_SAFE_INTEGER))throw invalid();
+        if(action==='fire'&&(typeof body.equation!=='string'||body.equation.length>120||![1,-1].includes(body.direction)))throw invalid();
+        return sendJson(res,200,await war.handle(warRpc,action,actor,body,config));
+      }
+      if(url.pathname.startsWith('/api/color/')){
+        if(url.search)throw invalid();
+        if(url.pathname==='/api/color/ranking')return sendJson(res,200,color.dto(await colorRpc('list',actor,config)));
+        const body=await readJson(req,16384);
+        if(url.pathname==='/api/color/start'){exact(body,[]);return sendJson(res,200,{ok:true,...color.issue(member.id,config.rpcSecret)});}
+        const time_ms=color.verify(member.id,config.rpcSecret,body);
+        return sendJson(res,200,{...color.dto(await colorRpc('submit',{...actor,time_ms},config)),time_ms});
       }
       if(url.pathname.startsWith('/api/sky/')){
         if(url.search)throw invalid();

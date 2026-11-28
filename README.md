@@ -1,4 +1,4 @@
-# 2player
+# KUSO Game
 
 KGS11th accounts and shared 轟, with two-player flick soccer.
 
@@ -15,7 +15,7 @@ Stakes start at 100轟 in 100轟 increments, with no separate game limit.
 Both players must have enough available funds and settlement headroom within
 the shared wallet's existing 10,000,000,000,000轟 representation limit.
 
-The lobby offers ソロゲーム, the online-member list, and the points ranking.
+The KUSO Game home is a two-column catalog of square illustrated game tiles: 2player, TEN LINK, and GRAPH ROCKET. The 2player tile opens a focused online-opponent list at /?game=2player; the legacy soccer ranking and spectator list are hidden, not deleted. TEN LINK keeps its existing game and leaderboard. GRAPH ROCKET is a local solo math puzzle: enter an origin-passing y=f(x), select left/right, and launch along the graph to destroy bases and incoming objects. Four levels, limited shots and three lives; incoming objects advance per shot. Safe expression parsing supports arithmetic, powers, implicit multiplication and common functions. No wallet or database changes.
 New soccer matches use named challenges and explicit acceptance only. The
 legacy random queue endpoint returns 410; old cancellation remains available
 for cleanup. Direct invitations and the existing soccer flow are unchanged.

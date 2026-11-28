@@ -23,14 +23,14 @@ function compile(raw){
  const f=expr(0);if(p!==input.length)fail();return f;
 }
 const STAGES=[
- {bases:[{x:4,y:4},{x:7,y:2}],incoming:[],shots:5},
- {bases:[{x:4,y:4},{x:-6,y:3}],incoming:[{x:7,y:-3,vx:-1,vy:.45}],shots:6},
- {bases:[{x:6,y:6},{x:-4,y:-4},{x:5,y:-5}],incoming:[{x:-8,y:2,vx:1.3,vy:-.325}],shots:7},
- {bases:[{x:3,y:6},{x:-7,y:2},{x:7,y:-3}],incoming:[{x:8,y:4,vx:-1.2,vy:-.6},{x:-8,y:-4,vx:1.2,vy:.6}],shots:8}
+ {bases:[{x:4,y:4},{x:8,y:2}],incoming:[],shots:5},
+ {bases:[{x:3,y:6},{x:7,y:3}],incoming:[{x:9,y:5,vx:-.9,vy:-.5}],shots:6},
+ {bases:[{x:2,y:7},{x:6,y:5},{x:8,y:2}],incoming:[{x:9,y:6,vx:-1.2,vy:-.8}],shots:7},
+ {bases:[{x:4,y:8},{x:7,y:6},{x:9,y:3}],incoming:[{x:9,y:8,vx:-.9,vy:-.8},{x:8,y:9,vx:-.8,vy:-.9}],shots:8}
 ];
 function stage(index){const s=STAGES[index%STAGES.length];return {bases:s.bases.map((b,i)=>({...b,id:'b'+i,kind:'base'})),incoming:s.incoming.map((b,i)=>({...b,id:'m'+i,kind:'meteor'})),shots:s.shots};}
-function trajectory(f,direction){if(![1,-1].includes(direction))fail();const y=f(0);if(!Number.isFinite(y)||Math.abs(y)>1e-7)throw new Error('原点 (0, 0) を通る数式にしてください。');const points=[{x:0,y:0}];for(let i=1;i<=500;i++){const x=direction*i*.02,y=f(x);if(!Number.isFinite(y)||Math.abs(y)>10||Math.abs(y-points.at(-1).y)>1.5)break;points.push({x,y});}return points;}
+function trajectory(f){const y=f(0);if(!Number.isFinite(y)||Math.abs(y)>1e-7)throw new Error('原点 (0, 0) を通る数式にしてください。');const points=[{x:0,y:0}];for(let i=1;i<=500;i++){const x=i*.02,y=f(x);if(!Number.isFinite(y)||y<0||y>10||Math.abs(y-points.at(-1).y)>1.5)break;points.push({x,y});}return points;}
 function impact(points,targets){const hits=[];for(let i=1;i<points.length;i++){const p=points[i],a=points[i-1],dx=p.x-a.x,dy=p.y-a.y,den=dx*dx+dy*dy;for(const t of targets){if(hits.some(h=>h.id===t.id))continue;const k=den?Math.max(0,Math.min(1,((t.x-a.x)*dx+(t.y-a.y)*dy)/den)):0;if(Math.hypot(t.x-a.x-k*dx,t.y-a.y-k*dy)<=.46)hits.push({id:t.id,at:i});}}return hits;}
-function advance(incoming){const survivors=[];let damage=0;for(const m of incoming){const x=m.x+m.vx,y=m.y+m.vy;if(Math.hypot(x,y)<1||Math.hypot(x,y)>Math.hypot(m.x,m.y)){damage++;}else survivors.push({...m,x,y});}return {survivors,damage};}
+function advance(incoming){const survivors=[];let damage=0;for(const m of incoming){const x=m.x+m.vx,y=m.y+m.vy;if(x<0||y<0||Math.hypot(x,y)<1||Math.hypot(x,y)>Math.hypot(m.x,m.y)){damage++;}else survivors.push({...m,x,y});}return {survivors,damage};}
 return {compile,stage,trajectory,impact,advance,stageCount:STAGES.length};
 });

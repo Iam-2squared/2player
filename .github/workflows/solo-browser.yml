@@ -4,6 +4,7 @@ on:
     paths:
       - 'public/**'
       - 'tests/e2e-solo.cjs'
+      - 'tests/e2e-rocket.cjs'
       - '.github/workflows/solo-browser.yml'
 permissions:
   contents: read
@@ -21,3 +22,4 @@ jobs:
       - run: node --check public/solo.js
       - run: npx playwright install --with-deps chromium webkit
       - run: node tests/e2e-solo.cjs
+      - run: node tests/e2e-rocket.cjs

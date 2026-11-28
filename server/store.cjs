@@ -19,7 +19,7 @@ function unpack(result) {
 }
 async function callRpc(functionName, action, input, config, timeoutMs = 12000) {
   // The function name is selected only by the two fixed server wrappers below.
-  if (!['two_player_rpc', 'two_player_lobby_rpc', 'two_player_ranking_rpc', 'two_player_social_rpc', 'two_player_solo_ranking_rpc', 'two_player_sky_ranking_rpc','two_player_color_ranking_rpc','two_player_war_rpc','two_player_rooftop_rpc'].includes(functionName)) throw unavailable();
+  if (!['two_player_rpc', 'two_player_lobby_rpc', 'two_player_ranking_rpc', 'two_player_social_rpc', 'two_player_solo_ranking_rpc', 'two_player_sky_ranking_rpc','two_player_color_ranking_rpc','two_player_war_rpc','two_player_rooftop_rpc','two_player_trace_ranking_rpc','two_player_submarine_rpc'].includes(functionName)) throw unavailable();
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 12000) throw unavailable();
   const started = performance.now();
   const operation = (functionName === 'two_player_lobby_rpc' ? 'lobby.' : functionName === 'two_player_ranking_rpc' ? 'ranking.' : functionName === 'two_player_social_rpc' ? 'social.' : 'soccer.') + action;
@@ -69,5 +69,7 @@ async function skyRpc(action,input={},config=getConfig()){return callRpc('two_pl
 async function colorRpc(action,input={},config=getConfig()){return callRpc('two_player_color_ranking_rpc',action,input,config);}
 async function warRpc(action,input={},config=getConfig()){return callRpc('two_player_war_rpc',action,input,config);}
 async function rooftopRpc(action,input={},config=getConfig()){return callRpc('two_player_rooftop_rpc',action,input,config);}
+async function traceRpc(action,input={},config=getConfig()){return callRpc('two_player_trace_ranking_rpc',action,input,config);}
+async function submarineRpc(action,input={},config=getConfig()){return callRpc('two_player_submarine_rpc',action,input,config);}
 async function closeStore() { const previous = pool; pool = undefined; if (previous) await previous.end(); }
-module.exports = {rpc, lobbyRpc, rankingRpc, socialRpc, soloRpc, skyRpc, colorRpc, warRpc, rooftopRpc, unpack, closeStore};
+module.exports = {rpc, lobbyRpc, rankingRpc, socialRpc, soloRpc, skyRpc, colorRpc, warRpc, rooftopRpc, traceRpc, submarineRpc, unpack, closeStore};

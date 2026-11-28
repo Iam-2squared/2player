@@ -5,7 +5,7 @@ const {HttpError} = require('./errors.cjs');
 const {securityHeaders, readJson, sendJson} = require('./http.cjs');
 const identity = require('./identity.cjs');
 const store = require('./store.cjs');
-const solo=require('./solo-ranking.cjs'),sky=require('./sky-ranking.cjs'),color=require('./color-ranking.cjs'),war=require('./war.cjs'),rooftop=require('./rooftop.cjs');
+const solo=require('./solo-ranking.cjs'),sky=require('./sky-ranking.cjs'),color=require('./color-ranking.cjs'),war=require('./war.cjs'),rooftop=require('./rooftop.cjs'),trace=require('./trace-ranking.cjs'),submarine=require('./submarine.cjs');
 const {requestFailure} = require('./diagnostics.cjs');
 const {requestConfig} = require('./deadline.cjs');
 const MAX_ROUND = 2147483647; // PostgreSQL integer storage limit, not a game-ending turn cap.
@@ -226,7 +226,7 @@ function requestUrl(req) {
   if (routes.length && metadata !== undefined && routes[0] !== metadata) throw invalid();
   const route = routes[0] ?? metadata;
   if (route !== undefined) {
-    if (!/^(?:session|login|logout|rooms|rooms\/join|match|offer|ready|formation|input|cancel|ranking|(?:solo|sky|color)\/(?:ranking|start|finish)|war\/(?:poll|fire|pass|leave)|rooftop\/(?:poll|invite|accept|decline|cancel|ready|cover|peek|fire|return|leave)|watch(?:\/games|\/leave)?|social\/(?:feed|stamp)|lobby(?:\/(?:heartbeat|leave))?|challenge(?:\/(?:accept|decline|cancel))?|queue(?:\/cancel)?)$/.test(route)) throw invalid();
+    if (!/^(?:session|login|logout|rooms|rooms\/join|match|offer|ready|formation|input|cancel|ranking|(?:solo|sky|color)\/(?:ranking|start|finish)|war\/(?:poll|fire|pass|leave)|rooftop\/(?:poll|invite|accept|decline|cancel|ready|cover|peek|fire|return|leave)|trace\/(?:ranking|start|submit|next)|submarine\/(?:poll|invite|accept|decline|cancel|ready|fire|return|leave)|watch(?:\/games|\/leave)?|social\/(?:feed|stamp)|lobby(?:\/(?:heartbeat|leave))?|challenge(?:\/(?:accept|decline|cancel))?|queue(?:\/cancel)?)$/.test(route)) throw invalid();
     const pathname = '/api/' + route;
     if (!['/api/index', '/api/index.js', pathname].includes(url.pathname)) throw invalid();
     url.pathname = pathname;
@@ -251,6 +251,7 @@ function createHandler(overrides = {}) {
   const skyRpc=overrides.skyRpc||store.skyRpc;
   const colorRpc=overrides.colorRpc||store.colorRpc,warRpc=overrides.warRpc||store.warRpc;
   const rooftopRpc=overrides.rooftopRpc||store.rooftopRpc;
+  const traceRpc=overrides.traceRpc||store.traceRpc,submarineRpc=overrides.submarineRpc||store.submarineRpc;
   const socialRpc = overrides.socialRpc || store.socialRpc;
   const simulate = overrides.simulate || ((state, inputs, formations) => require('../public/physics.js').simulate(state, inputs, formations));
   async function processResult(result, member, config) {
@@ -287,7 +288,7 @@ function createHandler(overrides = {}) {
       diagnosticContext.queryKeyCount = url.searchParams.size;
       diagnosticContext.otherQueryCount = url.searchParams.size - captures.length;
       const routes = {'/api/session': ['GET'], '/api/login': ['POST'], '/api/logout': ['POST'], '/api/rooms': ['GET', 'POST'],
-        '/api/rooms/join': ['POST'], '/api/match': ['GET'], '/api/ranking': ['GET'], '/api/rooftop/poll':['POST'], '/api/rooftop/invite':['POST'], '/api/rooftop/accept':['POST'], '/api/rooftop/decline':['POST'], '/api/rooftop/cancel':['POST'], '/api/rooftop/ready':['POST'], '/api/rooftop/cover':['POST'], '/api/rooftop/peek':['POST'], '/api/rooftop/fire':['POST'], '/api/rooftop/return':['POST'], '/api/rooftop/leave':['POST'], '/api/war/poll':['POST'], '/api/war/fire':['POST'], '/api/war/pass':['POST'], '/api/war/leave':['POST'], '/api/color/ranking':['GET'], '/api/color/start':['POST'], '/api/color/finish':['POST'], '/api/sky/ranking':['GET'], '/api/sky/start':['POST'], '/api/sky/finish':['POST'], '/api/solo/ranking':['GET'], '/api/solo/start':['POST'], '/api/solo/finish':['POST'], '/api/watch/games': ['GET'], '/api/watch': ['GET'], '/api/watch/leave': ['POST'], '/api/social/feed': ['GET'], '/api/social/stamp': ['POST'], '/api/offer': ['POST'], '/api/ready': ['POST'], '/api/formation': ['POST'], '/api/input': ['POST'], '/api/cancel': ['POST'],
+        '/api/rooms/join': ['POST'], '/api/match': ['GET'], '/api/ranking': ['GET'], '/api/trace/ranking':['POST'], '/api/trace/start':['POST'], '/api/trace/submit':['POST'], '/api/trace/next':['POST'], '/api/submarine/poll':['POST'], '/api/submarine/invite':['POST'], '/api/submarine/accept':['POST'], '/api/submarine/decline':['POST'], '/api/submarine/cancel':['POST'], '/api/submarine/ready':['POST'], '/api/submarine/fire':['POST'], '/api/submarine/return':['POST'], '/api/submarine/leave':['POST'], '/api/rooftop/poll':['POST'], '/api/rooftop/invite':['POST'], '/api/rooftop/accept':['POST'], '/api/rooftop/decline':['POST'], '/api/rooftop/cancel':['POST'], '/api/rooftop/ready':['POST'], '/api/rooftop/cover':['POST'], '/api/rooftop/peek':['POST'], '/api/rooftop/fire':['POST'], '/api/rooftop/return':['POST'], '/api/rooftop/leave':['POST'], '/api/war/poll':['POST'], '/api/war/fire':['POST'], '/api/war/pass':['POST'], '/api/war/leave':['POST'], '/api/color/ranking':['GET'], '/api/color/start':['POST'], '/api/color/finish':['POST'], '/api/sky/ranking':['GET'], '/api/sky/start':['POST'], '/api/sky/finish':['POST'], '/api/solo/ranking':['GET'], '/api/solo/start':['POST'], '/api/solo/finish':['POST'], '/api/watch/games': ['GET'], '/api/watch': ['GET'], '/api/watch/leave': ['POST'], '/api/social/feed': ['GET'], '/api/social/stamp': ['POST'], '/api/offer': ['POST'], '/api/ready': ['POST'], '/api/formation': ['POST'], '/api/input': ['POST'], '/api/cancel': ['POST'],
         '/api/lobby': ['GET'], '/api/lobby/heartbeat': ['POST'], '/api/lobby/leave': ['POST'], '/api/challenge': ['POST'],
         '/api/challenge/accept': ['POST'], '/api/challenge/decline': ['POST'], '/api/challenge/cancel': ['POST'], '/api/queue': ['POST'], '/api/queue/cancel': ['POST']};
       const allowed = routes[url.pathname];
@@ -377,6 +378,24 @@ function createHandler(overrides = {}) {
         if(!uuid(body.matchId))throw invalid();
         await socialRpc('leave',{...actor,matchId:body.matchId},config);
         return sendJson(res,200,{ok:true});
+      }
+      if(url.pathname.startsWith('/api/trace/')){
+        if(url.search)throw invalid();const action=url.pathname.split('/').at(-1),body=await readJson(req,32768);
+        exact(body,action==='ranking'||action==='start'?['course']:action==='submit'?['token','strokes']:['token']);
+        if(action==='ranking'||action==='start'){if(!integer(body.course,1,4))throw invalid();if(action==='ranking')return sendJson(res,200,trace.dto(await traceRpc('list',{...actor,course:body.course},config)));return sendJson(res,200,trace.issue(member.id,config.rpcSecret,body.course));}
+        if(action==='next')return sendJson(res,200,trace.next(member.id,config.rpcSecret,body.token));
+        const result=trace.submit(member.id,config.rpcSecret,body);
+        if(result.complete)Object.assign(result,trace.dto(await traceRpc('submit',{...actor,course:result.course,score:result.average},config)));
+        return sendJson(res,200,result);
+      }
+      if(url.pathname.startsWith('/api/submarine/')){
+        if(url.search)throw invalid();const action=url.pathname.split('/').at(-1),body=await readJson(req,2048);
+        const fields=action==='invite'?['targetId']:['accept','decline','cancel'].includes(action)?['inviteId']:action==='return'?['matchId']:['poll','leave'].includes(action)?[]:['matchId','seq',...(action==='ready'?['ships']:['cell','event'])];
+        exact(body,fields);for(const k of ['targetId','inviteId','matchId'])if(fields.includes(k)&&!uuid(body[k]))throw invalid();
+        if(fields.includes('seq')&&!integer(body.seq,1,1000000))throw invalid();
+        if(action==='ready'&&!submarine.validFleet(body.ships))throw invalid();
+        if(action==='fire'&&(!integer(body.cell,0,49)||!integer(body.event,0,1000000)))throw invalid();
+        return sendJson(res,200,await submarine.handle(submarineRpc,action,actor,body,config));
       }
       if(url.pathname.startsWith('/api/rooftop/')){
         if(url.search)throw invalid();const action=url.pathname.split('/').at(-1),body=await readJson(req,2048);

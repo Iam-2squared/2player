@@ -9,5 +9,6 @@ function position(t,time){const a=Math.max(0,time-t.born);return{x:t.x+t.vx*a,y:
 function alive(p){return p.y<H+R*2&&p.x>-R*2&&p.x<W+R*2;}
 function hit(targets,time,x,y){for(let i=targets.length-1;i>=0;i--){const t=targets[i],p=position(t,time);if(alive(p)&&Math.hypot(x-p.x,y-p.y)<=R)return {index:i,points:t.gold?5:1,p};}return null;}
 function canFire(time,last){return time>=0&&time<DURATION&&time-last>=INTERVAL-1e-9;}
-return {W,H,R,PPM,G,DURATION,INTERVAL,target,position,alive,hit,canFire};
+function schedule(seed){let state=seed>>>0;const rng=()=>((state=(Math.imul(state,1664525)+1013904223)>>>0)/4294967296);return Array.from({length:DURATION},(_,i)=>target(i,rng));}
+return {W,H,R,PPM,G,DURATION,INTERVAL,target,position,alive,hit,canFire,schedule};
 });

@@ -1,0 +1,15 @@
+(function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.TraceRules=api;})(globalThis,()=>{'use strict';
+const N=5,LIMIT=30000,COURSES=['一次関数・絶対値','二次関数','三次関数','四次関数'];
+function questions(seed,course){if(!Number.isInteger(course)||course<1||course>4)throw Error('invalid course');let s=seed>>>0;const r=()=>((s=(Math.imul(s,1664525)+1013904223)>>>0)/4294967296),pick=a=>a[Math.floor(r()*a.length)],out=[];
+ const banks=[
+ [['y=x',x=>x],['y=-x+2',x=>-x+2],['y=x/2-3',x=>x/2-3],['y=2x-4',x=>2*x-4],['y=|x|-4',x=>Math.abs(x)-4],['y=-|x+2|+3',x=>-Math.abs(x+2)+3],['y=|x-3|/2-2',x=>Math.abs(x-3)/2-2]],
+ [['y=x²/4-3',x=>x*x/4-3],['y=-(x-2)²/4+4',x=>-((x-2)**2)/4+4],['y=(x+3)²/9-2',x=>(x+3)**2/9-2],['y=x²/2-5',x=>x*x/2-5],['y=-x²/5+2',x=>-x*x/5+2],['y=(x-1)²/6-4',x=>(x-1)**2/6-4],['y=-(x+2)²/8+5',x=>-((x+2)**2)/8+5]],
+ [['y=x³/32',x=>x**3/32],['y=-x³/50+2',x=>-(x**3)/50+2],['y=(x-2)³/40-1',x=>(x-2)**3/40-1],['y=x³/24-x',x=>x**3/24-x],['y=-x³/40+2x',x=>-(x**3)/40+2*x],['y=(x+2)³/48+1',x=>(x+2)**3/48+1],['y=x³/60-2x+1',x=>x**3/60-2*x+1]],
+ [['y=x⁴/256-3',x=>x**4/256-3],['y=-x⁴/400+4',x=>-(x**4)/400+4],['y=(x²-16)²/144-4',x=>(x*x-16)**2/144-4],['y=(x-2)⁴/200-2',x=>(x-2)**4/200-2],['y=-(x²-25)²/225+5',x=>-((x*x-25)**2)/225+5],['y=(x+2)⁴/300-5',x=>(x+2)**4/300-5],['y=x⁴/200-x²/3+2',x=>x**4/200-x*x/3+2]]
+ ];const bank=banks[course-1].slice();while(out.length<N){const i=Math.floor(r()*bank.length),[label,fn]=bank.splice(i,1)[0];out.push({label,fn});}return out;}
+function target(q){const paths=[];let line=[];for(let i=0;i<=800;i++){const x=-10+i/40,y=q.fn(x);if(y>=-10&&y<=10){line.push([x,y]);}else if(line.length){paths.push(line);line=[];}}if(line.length)paths.push(line);return paths;}
+function validate(strokes){if(!Array.isArray(strokes)||strokes.length>24)return false;let count=0;for(const s of strokes){if(!Array.isArray(s)||s.length<1)return false;count+=s.length;if(count>1600)return false;for(const p of s)if(!Array.isArray(p)||p.length!==2||!p.every(v=>Number.isInteger(v)&&v>=-1000&&v<=1000))return false;}return true;}
+function samples(paths,step=.14){const out=[];for(const line of paths){if(!line.length)continue;out.push(line[0]);for(let i=1;i<line.length;i++){const a=line[i-1],b=line[i],n=Math.max(1,Math.ceil(Math.hypot(b[0]-a[0],b[1]-a[1])/step));for(let j=1;j<=n;j++)out.push([a[0]+(b[0]-a[0])*j/n,a[1]+(b[1]-a[1])*j/n]);if(out.length>20000)return null;}}return out;}
+function grade(q,strokes){if(!validate(strokes))throw Error('invalid drawing');const a=samples(target(q)),b=samples(strokes.map(s=>s.map(p=>p.map(v=>v/100))));if(!a?.length||!b?.length)return 0;function similarity(from,to){return from.reduce((sum,p)=>{let d=Infinity;for(const q of to){const ds=(p[0]-q[0])**2+(p[1]-q[1])**2;if(ds<d)d=ds;if(d<.0004)break;}return sum+Math.max(0,1-Math.sqrt(d)/1.25);},0)/from.length;}const coverage=similarity(a,b),precision=similarity(b,a);return Math.round(10000*(coverage+precision?2*coverage*precision/(coverage+precision):0));}
+return {N,LIMIT,COURSES,questions,target,validate,grade};
+});

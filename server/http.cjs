@@ -11,26 +11,26 @@ function securityHeaders(res) {
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
 }
 
-async function readJson(req) {
+async function readJson(req, limit=MAX_BODY) {
   if (!/^application\/json(?:\s*;|$)/i.test(String(req.headers?.['content-type'] || '')) ||
       (req.headers?.['content-encoding'] && req.headers['content-encoding'] !== 'identity')) {
     throw new HttpError(415, 'JSON形式で送信してください。', 'CONTENT_TYPE_REQUIRED');
   }
   const length = req.headers?.['content-length'];
-  if (length !== undefined && (!/^\d+$/.test(String(length)) || Number(length) > MAX_BODY)) throw new HttpError(413, '送信内容が大きすぎます。', 'BODY_TOO_LARGE');
+  if (length !== undefined && (!/^\d+$/.test(String(length)) || Number(length) > limit)) throw new HttpError(413, '送信内容が大きすぎます。', 'BODY_TOO_LARGE');
   // Vercel may parse the body before invoking the handler. Bound both paths.
   if (req.body !== undefined) {
     let raw;
     try { raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : typeof req.body === 'string' ? req.body : JSON.stringify(req.body); }
     catch { throw new HttpError(400, '送信内容を確認してください。', 'INVALID_INPUT'); }
-    if (Buffer.byteLength(raw || '') > MAX_BODY) throw new HttpError(413, '送信内容が大きすぎます。', 'BODY_TOO_LARGE');
+    if (Buffer.byteLength(raw || '') > limit) throw new HttpError(413, '送信内容が大きすぎます。', 'BODY_TOO_LARGE');
     return parseJson(raw);
   }
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += Buffer.byteLength(chunk);
-    if (size > MAX_BODY) throw new HttpError(413, '送信内容が大きすぎます。', 'BODY_TOO_LARGE');
+    if (size > limit) throw new HttpError(413, '送信内容が大きすぎます。', 'BODY_TOO_LARGE');
     chunks.push(Buffer.from(chunk));
   }
   return parseJson(Buffer.concat(chunks).toString('utf8'));

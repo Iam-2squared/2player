@@ -1123,7 +1123,7 @@
     render();
   });
   $('notice-close').addEventListener('click', () => show('notice', false));
-  for(const id of ['solo-button','rocket-button','soccer-button','sky-button','war-button','color-button','rooftop-button'])$(id).addEventListener('click',event=>{if(S.busy||S.pending||S.match)event.preventDefault();});
+  for(const id of ['solo-button','rocket-button','soccer-button','sky-button','war-button','color-button','rooftop-button','trace-button','submarine-button'])$(id).addEventListener('click',event=>{if(S.busy||S.pending||S.match)event.preventDefault();});
   $('offer-form').addEventListener('submit', event => { event.preventDefault(); if ($('offer-form').reportValidity() && S.match?.status === 'waiting') void mutate('offer', { matchId: S.match.id, stake: Number($('stake').value) }); });
   $('stake').addEventListener('input', () => { if (S.match?.status === 'waiting') renderRoom(!!S.busy || !!S.pending); });
   $('ready-button').addEventListener('click', () => {

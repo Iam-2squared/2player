@@ -68,7 +68,7 @@ function mutate(original,action,actor,body={},now=Date.now()){
  self.seq=body.seq;return s;
 }
 function cells(ship){if(!Array.isArray(ship)||ship.length!==3)return [];const [size,start,d]=ship;if(![2,3,4,5].includes(size)||!Number.isInteger(start)||start<0||start>=50||!['h','v'].includes(d))return [];if(d==='h'&&start%10+size>10||d==='v'&&Math.floor(start/10)+size>5)return [];return Array.from({length:size},(_,i)=>start+i*(d==='h'?1:10));}
-function validFleet(ships){return Array.isArray(ships)&&ships.length===4&&new Set(ships.map(s=>s?.[0])).size===4&&ships.every(s=>cells(s).length===s[0])&&new Set(ships.flatMap(cells)).size===14;}
+function validFleet(ships){return Array.isArray(ships)&&ships.length===4&&new Set(ships.map(s=>s?.[0])).size===4&&ships.every(s=>Array.isArray(s)&&[2,3,4,5].includes(s[0])&&cells(s).length===s[0])&&new Set(ships.flatMap(cells)).size===14;}
 function dto(s,actor,now){
  const id=actor.memberId,m=matchFor(s,id),self=m?.seats.find(p=>p.id===id),other=m?.seats.find(p=>p.id!==id);
  const name=x=>s.players.find(p=>p.id===x)?.name||'対戦相手';

@@ -80,3 +80,5 @@ test('lobby presents no stake controls before a verified opponent exists',()=>{
  assert(js.includes('void refreshRanking(true)'));
  assert(html.includes('id="stake"') && html.includes('対戦相手が決まりました'));
 });
+
+test('all game pages lock accidental zoom and the catalog uses the Japanese target title',()=>{for(const name of ['index','solo','rocket','sky']){const html=fs.readFileSync(require.resolve('../public/'+name+'.html'),'utf8');assert.match(html,/maximum-scale=1, user-scalable=no/);assert.ok(html.includes('/zoom-lock.js'));if(name==='index'||name==='sky'){assert.ok(html.includes('射法投射'));assert.ok(!html.includes('SKY TARGET'));}}});

@@ -3,3 +3,5 @@
 :root{background:#07111e}body{background:radial-gradient(ellipse at 75% 10%,#1b3250 0,transparent 55%),linear-gradient(#07111e,#101f33);min-height:100svh}#field{background:#081321;border-color:#365570;box-shadow:0 10px 28px #02081099}#labels text{font-size:11px;fill:#b8cedf}#fire-form{gap:10px}#fire{box-shadow:0 0 12px #8bf3e12a}#targets text{paint-order:stroke;stroke:#0a1527;stroke-width:3px;stroke-linejoin:round}
 
 #rocket-menu{padding:30px 4px}#rocket-menu h2{font-size:13px;letter-spacing:.18em;color:#9bb3ca;margin-bottom:18px}#stage-list{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}#stage-list button{aspect-ratio:1;font-size:20px;border-radius:13px}#stage-list button:not(:disabled){border-color:#8bf3e1;color:#8bf3e1}#progress-status{text-align:right;color:#9bb3ca;font-size:12px}
+
+html,body{touch-action:pan-x pan-y;-webkit-text-size-adjust:100%;text-size-adjust:100%}button,a{touch-action:manipulation}
